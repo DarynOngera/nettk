@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Run a command inside a lab host:  sudo lab/ex h1 ping -c1 10.0.2.2
+set -euo pipefail
+here=$(cd "$(dirname "$0")" && pwd)
+source "$here/lib.sh"
+[[ $# -ge 2 ]] || { echo "usage: $0 <host> <cmd...>" >&2; exit 2; }
+nt_require_root
+nt_ex "$@"

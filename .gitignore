@@ -1,0 +1,21 @@
+# build output
+build/
+*.o
+*.d
+
+# generated pcaps are never committed (AGENTS.md section 9)
+captures/*
+!captures/.gitkeep
+fixtures/*
+!fixtures/.gitkeep
+docs/phase0-evidence/*.pcap
+docs/phase0-evidence/*.pcapng
+
+# python
+__pycache__/
+*.pyc
+
+# editor and OS noise
+*~
+*.swp
+.DS_Store
