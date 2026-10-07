@@ -1,7 +1,8 @@
 # nettk: Linux networking toolkit
 
-A progressive set of low-level networking tools (C first, Rust later) built on top of a
-disposable network-namespace lab. Phase 0 is the harness; see `docs/phase0.md`.
+A progressive set of low-level networking tools built on top of a
+disposable network-namespace lab.
+
 Step-by-step commands and acceptance criteria: `usage.md`.
 
 ## Quick start (Linux, root for the lab only)
