@@ -8,7 +8,11 @@ here=$(cd "$(dirname "$0")/.." && pwd)
 pcaps=("$@")
 if [[ ${#pcaps[@]} -eq 0 ]]; then
   shopt -s nullglob
-  pcaps=("$here"/fixtures/*.pcap)
+  # arp-flood.pcap is 20k near-identical packets for the memory test, not fuzzing.
+  for p in "$here"/fixtures/*.pcap; do
+    [[ $p == *-flood.pcap ]] && continue
+    pcaps+=("$p")
+  done
   shopt -u nullglob
 fi
 [[ ${#pcaps[@]} -gt 0 ]] || { echo "no pcaps; run 'make fixtures' first" >&2; exit 1; }

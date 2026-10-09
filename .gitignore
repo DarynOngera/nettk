@@ -8,6 +8,8 @@ captures/*
 !captures/.gitkeep
 fixtures/*
 !fixtures/.gitkeep
+!fixtures/golden/
+!fixtures/golden/*
 docs/phase0-evidence/*.pcap
 docs/phase0-evidence/*.pcapng
 docs/phase1-evidence/*.pcap

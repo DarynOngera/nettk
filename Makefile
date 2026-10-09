@@ -27,34 +27,46 @@ else
 endif
 
 OUT := build/$(BUILD)
-CFLAGS  += $(BASE_CFLAGS) $(BUILD_CFLAGS) -Isrc/lib
+CFLAGS  += $(BASE_CFLAGS) $(BUILD_CFLAGS) -Isrc/lib -Isrc/common
 LDFLAGS += $(BUILD_LDFLAGS)
 
-# src/lib/*.c  -> $(OUT)/libnettk.a   (decode library, shared by every tool)
-# src/<tool>/*.c -> $(OUT)/bin/<tool> (one binary per directory)
+# src/lib/*.c    -> $(OUT)/libnettk.a    (decode library, pure, shared by every tool)
+# src/common/*.c -> $(OUT)/libntcommon.a (I/O plumbing: guard, clock, pcap, live)
+# src/<tool>/*.c -> $(OUT)/bin/<tool>    (one binary per directory)
 LIB_SRC := $(wildcard src/lib/*.c)
 LIB_OBJ := $(LIB_SRC:src/%.c=$(OUT)/obj/%.o)
 LIB     := $(OUT)/libnettk.a
 LIBDEP  := $(if $(LIB_SRC),$(LIB))
 
-TOOL_DIRS := $(filter-out src/lib/,$(wildcard src/*/))
+COMMON_SRC := $(wildcard src/common/*.c)
+COMMON_OBJ := $(COMMON_SRC:src/%.c=$(OUT)/obj/%.o)
+COMMON     := $(OUT)/libntcommon.a
+COMMONDEP  := $(if $(COMMON_SRC),$(COMMON))
+
+TOOL_DIRS := $(filter-out src/lib/ src/common/,$(wildcard src/*/))
 TOOLS := $(foreach d,$(TOOL_DIRS),$(if $(wildcard $(d)*.c),$(notdir $(d:%/=%))))
 BINS  := $(TOOLS:%=$(OUT)/bin/%)
 
 define TOOL_RULE
 $(1)_OBJ := $$(patsubst src/%.c,$(OUT)/obj/%.o,$$(wildcard src/$(1)/*.c))
-$(OUT)/bin/$(1): $$($(1)_OBJ) $$(LIBDEP)
+$(OUT)/bin/$(1): $$($(1)_OBJ) $$(COMMONDEP) $$(LIBDEP)
 > @mkdir -p $$(@D)
 > $$(CC) $$^ -o $$@ $$(LDFLAGS)
 endef
 $(foreach t,$(TOOLS),$(eval $(call TOOL_RULE,$(t))))
 
-.PHONY: all help clean test san-test fuzz fuzz-seeds fuzz-run fixtures deps \
-        lab-up lab-down lab-status lab-check phase0
+.PHONY: all help clean test san-test fuzz fuzz-seeds fuzz-run fixtures golden deps \
+        lab-up lab-down lab-status lab-check phase0 \
+        oracle-traceroute scenarios-traceroute scenarios-arp scenarios-ndp arpmon-check \
+        scenarios-spoof
 
 all: $(BINS) ## build every tool (BUILD=asan|tsan|release)
 
 $(LIB): $(LIB_OBJ)
+> @mkdir -p $(@D)
+> ar rcs $@ $^
+
+$(COMMON): $(COMMON_OBJ)
 > @mkdir -p $(@D)
 > ar rcs $@ $^
 
@@ -64,18 +76,13 @@ $(OUT)/obj/%.o: src/%.c
 
 -include $(shell find $(OUT)/obj -name '*.d' 2>/dev/null)
 
-# tests/unit/test_*.c -> $(OUT)/tests/<name>, each linking libnettk.a
+# tests/unit/test_*.c -> $(OUT)/tests/<name>, each linking libntcommon.a and libnettk.a
 TEST_SRC := $(wildcard tests/unit/test_*.c)
 TEST_BIN := $(patsubst tests/unit/%.c,$(OUT)/tests/%,$(TEST_SRC))
 
-# pcap lives in the tool (it does I/O), so its test links pcap.c explicitly.
-$(OUT)/tests/test_pcap: tests/unit/test_pcap.c src/sniff/pcap.c $(LIB) $(LIB_SRC)
+$(OUT)/tests/%: tests/unit/%.c $(COMMONDEP) $(LIB) $(LIB_SRC)
 > @mkdir -p $(@D)
-> $(CC) $(CFLAGS) -Isrc/sniff $< src/sniff/pcap.c $(LIB) -o $@ $(LDFLAGS)
-
-$(OUT)/tests/%: tests/unit/%.c $(LIB) $(LIB_SRC)
-> @mkdir -p $(@D)
-> $(CC) $(CFLAGS) $< $(LIB) -o $@ $(LDFLAGS)
+> $(CC) $(CFLAGS) $< $(COMMON) $(LIB) -o $@ $(LDFLAGS)
 
 test: $(TEST_BIN) ## build and run unit tests (BUILD=asan|tsan|release)
 > @fail=0; for t in $(TEST_BIN); do echo "== $$t"; "$$t" || fail=1; done; exit $$fail
@@ -100,10 +107,13 @@ fuzz-run: fuzz fuzz-seeds ## build and fuzz for 5 minutes
 fixtures: ## generate scapy test captures into fixtures/
 > python3 py/gen_fixtures.py fixtures
 
+golden: ## regenerate scapy golden vectors for the M1 builders
+> python3 py/gen_golden.py fixtures/golden
+
 deps: ## check required tools (lab/deps.sh --install to install)
 > @lab/deps.sh
 
-lab-up: ## create the lab (TOPO=basic|bridge3)
+lab-up: ## create the lab (TOPO=basic|line4|bridge3)
 > $(SUDO) lab/up.sh $(TOPO) --force
 lab-down: ## destroy the lab
 > $(SUDO) lab/down.sh
@@ -111,6 +121,18 @@ lab-status: ## addresses, routes, neighbours
 > $(SUDO) lab/status.sh
 lab-check: ## smoke-test the running lab
 > $(SUDO) lab/check.sh
+oracle-traceroute: ## compare traceroute hops against traceroute(8) (arg: MODE=udp|icmp)
+> $(SUDO) scripts/oracle-traceroute.sh "" "" $(if $(MODE),$(MODE),udp)
+scenarios-traceroute: ## M6 traceroute error-annotation scenarios (line4)
+> $(SUDO) lab/scenarios-traceroute.sh
+scenarios-arp: ## M7 arp hostile-reply scenarios (bridge3)
+> $(SUDO) lab/scenarios-arp.sh
+scenarios-ndp: ## M9 ndp hostile-advertisement scenarios (basic)
+> $(SUDO) lab/scenarios-ndp.sh
+arpmon-check: ## M10 arpmon rules + bounded-memory fixture check
+> scripts/arpmon-check.sh
+scenarios-spoof: ## M11 ARP poison/restore/defence experiment (bridge3)
+> $(SUDO) lab/scenarios-spoof.sh
 
 phase0: ## full Phase 0 acceptance: sanitizers, fixtures, lab up, lab checks
 > $(MAKE) san-test

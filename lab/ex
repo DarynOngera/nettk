@@ -5,4 +5,5 @@ here=$(cd "$(dirname "$0")" && pwd)
 source "$here/lib.sh"
 [[ $# -ge 2 ]] || { echo "usage: $0 <host> <cmd...>" >&2; exit 2; }
 nt_require_root
+export NT_LAB=1
 nt_ex "$@"

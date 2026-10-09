@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build a lab topology.  usage: sudo lab/up.sh [basic|bridge3] [--force]
+# Build a lab topology.  usage: sudo lab/up.sh [basic|line4|bridge3] [--force]
 set -eEuo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 source "$here/lib.sh"
