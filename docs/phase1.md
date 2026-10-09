@@ -246,9 +246,10 @@ packets=9  truncated=5 malformed=3 unsupported=0      exit 0, no sanitizer repor
   `caplen > 262144`, `caplen` past the file, short record header (each with its own message).
 - Round trip: `sniff -r fixtures/basic.pcap -w /tmp/rt.pcap` then `cmp fixtures/basic.pcap
   /tmp/rt.pcap` -> **IDENTICAL** (byte-for-byte, timestamps preserved); tshark reads it back.
-- Fuzz: `make fuzz` + `make fuzz-seeds` (28 seeds from all fixtures). **BLOCKED on this machine:
-  clang is not installed** (`command -v clang` empty). Owner: install clang, then
-  `make fuzz-run`; success = `-max_total_time=300` ends with no crash and no sanitizer finding.
+- Fuzz: `make fuzz` + `make fuzz-seeds`, then
+  `build/fuzz/fuzz_decode fuzz/corpus -max_total_time=300 -print_final_stats=1`
+  -> **DONE 2026-10-09**: 45,986,589 runs in 301 s, 137 new units, no crash, no sanitizer finding.
+  `fuzz/fuzz_match.c` (M1-M3 matchers/quote parser) also ran 16.9M runs in 121 s clean.
 
 ## Break and debug (owner runs in the lab)
 
@@ -301,7 +302,7 @@ sudo lab/down.sh && sudo lab/up.sh basic --force     # rebuild with offloads OFF
 | `--tsv` matches tshark on basic + ipv6 | done (fragments explained) |
 | malformed.pcap per M0 map, no crash | done |
 | pcap round trip byte-identical | done |
-| fuzz 5 minutes clean | blocked: clang missing (owner to install + `make fuzz-run`) |
+| fuzz 5 minutes clean | done: `fuzz_decode` 45.9M runs/301 s, `fuzz_match` 16.9M runs/121 s, no findings |
 | live capture matches tcpdump on the lab | done: `docs/phase1-evidence/` (19 packets, live `--tsv` == tshark) |
 | capabilities dropped after socket open | code + `scripts/lab-validation.sh` prints `CapEff` |
 | break-and-debug + security note | security note done; break-and-debug owner to run |

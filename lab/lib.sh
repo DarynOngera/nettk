@@ -85,6 +85,11 @@ nt_cfg_if() {
   if [[ $cidr != - ]]; then
     ip -n "$ns" addr add "$cidr" dev "$dev"
   fi
+  # Skip DAD on the auto-generated link-local address: otherwise a freshly created
+  # lab needs ~1s before ND can send, and a check run right after up.sh fails.
+  if [[ "${NT_IPV6:-1}" != 0 ]]; then
+    ip netns exec "$ns" sysctl -qw "net.ipv6.conf.${dev}.accept_dad=0" 2>/dev/null || true
+  fi
   ip -n "$ns" link set dev "$dev" up
   nt_tune_if "$1" "$dev"
 }

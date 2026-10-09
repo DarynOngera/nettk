@@ -3,15 +3,21 @@
 A progressive set of low-level networking tools built on top of a
 disposable network-namespace lab.
 
-Step-by-step commands and acceptance criteria: `usage.md`.
+**This is a learning lab.** Every active tool runs only inside `nt-*` namespaces (never a real
+network); you drive it through `lab/ex <host> ...` and compare its output against the system oracles
+(`ping`, `traceroute`, `arping`, `nmap`, tcpdump/tshark). Step-by-step commands and acceptance
+criteria: `usage.md`.
 
 ## Quick start (Linux, root for the lab only)
 
 ```
 make deps                 # check tools; lab/deps.sh --install on Debian/Ubuntu
 make phase0               # sanitizer proof, fixtures, lab up, lab checks
-sudo lab/ex h1 ping -c2 10.0.2.2
+sudo lab/up.sh basic       # h1 -- rtr -- h2 (IPv4 + IPv6)
+sudo lab/ex h1 ping -6 -c2 fd00:2::2
+sudo lab/ex h1 traceroute -n 10.0.2.2
 sudo lab/cap.sh rtr r1 icmp          # pcap lands in captures/
+sudo lab/check.sh                    # 13 smoke checks (see usage.md)
 make lab-down
 ```
 
@@ -35,6 +41,7 @@ Needs a real Linux kernel with namespaces (VM, bare metal, or WSL2). Containers 
 ## Topologies
 
 - `basic`: h1 -- rtr -- h2, two routed /24s (10.0.1.0/24, 10.0.2.0/24). MACs `02:00:00:00:<net>:<host>`.
+- `line4`: h1 -- r1 -- r2 -- h2, two routers across 10.0.1.0/24, 10.0.9.0/30, 10.0.2.0/24; for traceroute and TTL work.
 - `bridge3`: h1, h2, h3 on one bridged segment 10.0.0.0/24 for ARP, DHCP, and broadcast experiments.
 
 Add a topology by dropping `lab/topo/<name>.sh` defining `topo_up` and `topo_hint`.

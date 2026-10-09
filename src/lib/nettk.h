@@ -165,4 +165,66 @@ uint32_t nt_csum_pseudo6(const uint8_t src[16], const uint8_t dst[16], uint8_t n
 /* top-level dispatcher: walks L2 -> VLAN -> L3 -> L4 as far as the frame allows */
 nt_status nt_decode_frame(const uint8_t *buf, size_t len, nt_packet *out);
 
+/*
+ * Builders: pure, no I/O, bounds-checked. Checksums are computed here.
+ * Return NT_ERR_TRUNCATED when cap is too small, NT_ERR_MALFORMED on invalid
+ * arguments (NULL pointer where one is required). *outlen is the bytes written.
+ */
+
+/* ICMPv4 echo request (type 8) or reply (type 0). outlen = 8 + datalen. */
+nt_status nt_build_icmp_echo(uint8_t *out, size_t cap, size_t *outlen,
+                             uint8_t type, uint16_t id, uint16_t seq,
+                             const uint8_t *data, size_t datalen);
+
+typedef struct {
+    uint8_t  eth_src[6], eth_dst[6]; /* Ethernet addresses (eth_dst = broadcast for a request) */
+    uint16_t op;                     /* 1 request, 2 reply */
+    uint8_t  sha[6], spa[4];         /* sender hardware/protocol */
+    uint8_t  tha[6], tpa[4];         /* target hardware (zero for a request) / protocol */
+} nt_arp_in;
+
+/* Full Ethernet + ARP-for-IPv4 frame, 42 bytes. Minimum-frame padding is the
+ * send path's concern (confirmed by capture at M7). */
+nt_status nt_build_arp_frame(uint8_t *out, size_t cap, size_t *outlen, const nt_arp_in *in);
+
+/* ICMPv6 neighbour solicitation. src_ll may be NULL to omit the source
+ * link-layer option (DAD); the checksum uses the IPv6 pseudo-header over src/dst. */
+nt_status nt_build_icmp6_ns(uint8_t *out, size_t cap, size_t *outlen,
+                            const uint8_t src[16], const uint8_t dst[16],
+                            const uint8_t target[16], const uint8_t src_ll[6]);
+
+/* ICMPv6 echo request (128) or reply (129); checksum over the IPv6 pseudo-header. */
+nt_status nt_build_icmp6_echo(uint8_t *out, size_t cap, size_t *outlen,
+                              uint8_t type, uint16_t id, uint16_t seq,
+                              const uint8_t *data, size_t datalen,
+                              const uint8_t src[16], const uint8_t dst[16]);
+
+/*
+ * Reply matchers: pure, no I/O, fuzzable. NO_MATCH means "well-formed, not ours"
+ * and is never an error; INVALID means the input could not be trusted.
+ */
+typedef enum { NT_MATCH = 0, NT_NO_MATCH = 1, NT_INVALID = 2 } nt_match;
+
+typedef struct {
+    uint16_t id, seq;
+    uint32_t src;          /* expected source (host order); 0 = don't care */
+    const uint8_t *data;   /* expected echo payload after id/seq, or NULL */
+    size_t datalen;
+} nt_echo_probe;
+
+nt_match nt_match_icmp_echo_reply(const nt_icmp *r, uint32_t src, const nt_echo_probe *p);
+nt_match nt_match_icmp6_echo_reply(const nt_icmp *r, const uint8_t src[16], const nt_echo_probe *p);
+
+/* The IPv4 packet quoted inside an ICMPv4 error (RFC 792). */
+typedef struct {
+    uint8_t  proto;
+    uint32_t src, dst;
+    uint16_t sport, dport;  /* UDP/TCP */
+    uint16_t id, seq;       /* ICMP */
+} nt_quote;
+
+/* Parse the quoted packet's header plus 8 bytes of L4. The original totlen
+ * describes the whole packet, so only what is actually present is read. */
+nt_status nt_icmp_quote_parse(const nt_icmp *err, nt_quote *out);
+
 #endif /* NETTK_H */

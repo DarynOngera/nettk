@@ -1,5 +1,5 @@
-#ifndef SNIFF_PCAP_H
-#define SNIFF_PCAP_H
+#ifndef NT_PCAP_H
+#define NT_PCAP_H
 
 #include "nettk.h"
 
@@ -39,4 +39,4 @@ int nt_pcap_writer_write(nt_pcap_writer *w, const uint8_t *buf, size_t caplen, s
                          uint32_t ts_sec, uint32_t ts_frac);
 void nt_pcap_writer_close(nt_pcap_writer *w);
 
-#endif /* SNIFF_PCAP_H */
+#endif /* NT_PCAP_H */

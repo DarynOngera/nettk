@@ -1,5 +1,5 @@
-#ifndef SNIFF_LIVE_H
-#define SNIFF_LIVE_H
+#ifndef NT_LIVE_H
+#define NT_LIVE_H
 
 #include <stddef.h>
 #include <stdint.h>
@@ -25,4 +25,4 @@ int nt_live_next(nt_live *l, uint8_t *buf, size_t cap, size_t *caplen, uint64_t 
 
 void nt_live_close(nt_live *l);
 
-#endif /* SNIFF_LIVE_H */
+#endif /* NT_LIVE_H */

@@ -13,11 +13,19 @@ topo_up() {
   nt_cfg_if h2  eth0 10.0.2.2/24 02:00:00:00:02:02
   nt_ex h1 ip route add default via 10.0.1.1
   nt_ex h2 ip route add default via 10.0.2.1
+  nt_ex h1  ip -6 addr add fd00:1::2/64 dev eth0 nodad
+  nt_ex rtr ip -6 addr add fd00:1::1/64 dev r1 nodad
+  nt_ex rtr ip -6 addr add fd00:2::1/64 dev r2 nodad
+  nt_ex h2  ip -6 addr add fd00:2::2/64 dev eth0 nodad
+  nt_ex h1 ip -6 route add default via fd00:1::1
+  nt_ex h2 ip -6 route add default via fd00:2::1
   nt_ex rtr sysctl -qw net.ipv4.ip_forward=1
+  nt_ex rtr sysctl -qw net.ipv6.conf.all.forwarding=1
 }
 topo_hint() {
   cat <<'HINT'
   sudo lab/ex h1 ping -c2 10.0.2.2        # routed path, TTL 63 on the reply
+  sudo lab/ex h1 ping -6 -c2 fd00:2::2    # IPv6 path (hop limit 63 on the reply)
   sudo lab/cap.sh rtr r1 icmp              # capture on the router's h1-facing port
   sudo lab/status.sh                       # addresses, routes, neighbours
 HINT

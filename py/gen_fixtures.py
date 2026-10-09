@@ -105,6 +105,41 @@ def malformed():
     return frames
 
 
+def arp_spoof():
+    """One honest ARP exchange followed by attacks that each trip one monitor rule."""
+    att = "02:00:00:00:00:03"
+    wrong_src = "02:00:00:00:00:0a"
+    ether_src = "02:00:00:00:00:0b"
+    z = "00:00:00:00:00:00"
+    pk = [
+        Ether(src=H1, dst="ff:ff:ff:ff:ff:ff") /
+        ARP(op=1, hwsrc=H1, psrc="10.0.0.1", pdst="10.0.0.2"),
+        Ether(src=H2, dst=H1) / ARP(op=2, hwsrc=H2, psrc="10.0.0.2", hwdst=H1, pdst="10.0.0.1"),
+        # binding-change + duplicate-ip + unsolicited reply: attacker claims h2's IP
+        Ether(src=att, dst=H1) / ARP(op=2, hwsrc=att, psrc="10.0.0.2", hwdst=H1, pdst="10.0.0.1"),
+        # gratuitous announcement (sender IP == target IP)
+        Ether(src=att, dst="ff:ff:ff:ff:ff:ff") / ARP(op=2, hwsrc=att, psrc="10.0.0.2", hwdst=z, pdst="10.0.0.2"),
+        # flip-flop: back to the original MAC
+        Ether(src=H2, dst=H1) / ARP(op=2, hwsrc=H2, psrc="10.0.0.2", hwdst=H1, pdst="10.0.0.1"),
+        # Ethernet/ARP MAC mismatch on a fresh IP
+        Ether(src=ether_src, dst=H1) /
+        ARP(op=2, hwsrc=wrong_src, psrc="10.0.0.77", hwdst=H1, pdst="10.0.0.1"),
+    ]
+    return stamp(pk)
+
+
+def arp_flood(n=20000):
+    """Thousands of gratuitous bindings for distinct IPs: the table must stay bounded."""
+    z = "00:00:00:00:00:00"
+    pk = []
+    for i in range(n):
+        ip = f"10.7.{(i >> 8) & 0xff}.{i & 0xff}"
+        mac = bytes([0x02, 0x00, 0x00, (i >> 16) & 0xff, (i >> 8) & 0xff, i & 0xff])
+        pk.append(Ether(src=mac, dst="ff:ff:ff:ff:ff:ff") /
+                  ARP(op=2, hwsrc=mac, psrc=ip, hwdst=z, pdst=ip))
+    return stamp(pk)
+
+
 def write_raw_pcap(path, frames):
     """Write raw byte strings as an Ethernet pcap (scapy cannot build runt frames)."""
     with open(path, "wb") as fh:
@@ -120,7 +155,9 @@ def main():
     wrpcap(str(out / "basic.pcap"), basic())
     wrpcap(str(out / "ipv6.pcap"), ipv6())
     write_raw_pcap(out / "malformed.pcap", malformed())
-    print(f"wrote {out/'basic.pcap'}, {out/'ipv6.pcap'} and {out/'malformed.pcap'}")
+    wrpcap(str(out / "arp-spoof.pcap"), arp_spoof())
+    wrpcap(str(out / "arp-flood.pcap"), arp_flood())
+    print(f"wrote {out}/basic.pcap, ipv6.pcap, malformed.pcap, arp-spoof.pcap, arp-flood.pcap")
 
 
 if __name__ == "__main__":

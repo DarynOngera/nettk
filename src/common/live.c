@@ -29,6 +29,30 @@
 #define TP_STATUS_VLAN_TPID_VALID 0x40
 #endif
 
+/* Confirm the process effective set is exactly {CAP_NET_RAW} (M12 hardening). */
+static int caps_are_minimal(void)
+{
+    FILE *f = fopen("/proc/self/status", "r");
+    if (f == NULL)
+        return -1;
+    char line[256];
+    unsigned long low = 0, high = 0;
+    int found = 0;
+    while (fgets(line, sizeof line, f) != NULL) {
+        if (strncmp(line, "CapEff:", 7) == 0) {
+            if (sscanf(line + 7, "%lx %lx", &low, &high) < 1)
+                break;
+            found = 1;
+            break;
+        }
+    }
+    fclose(f);
+    if (!found)
+        return -1;
+    unsigned long want = 1ul << (CAP_NET_RAW & 31);
+    return ((low & ~want) != 0 || high != 0) ? -1 : 0;
+}
+
 /* Drop from root to the invoking user while retaining CAP_NET_RAW only.
  * Under `sudo` the target is SUDO_UID/SUDO_GID; otherwise the real uid. */
 static int drop_privileges(void)
@@ -70,6 +94,8 @@ static int drop_privileges(void)
         return -1;
     if (prctl(PR_SET_KEEPCAPS, 0, 0, 0, 0) != 0)
         return -1;
+    if (caps_are_minimal() != 0)
+        return -1;
     return 0;
 }
 
@@ -79,13 +105,13 @@ int nt_live_open(nt_live *l, const char *iface)
     l->fd = -1;
     l->ifindex = (int)if_nametoindex(iface);
     if (l->ifindex == 0) {
-        fprintf(stderr, "sniff: no such interface '%s'\n", iface);
+        fprintf(stderr, "nettk: no such interface '%s'\n", iface);
         return -1;
     }
 
     int fd = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
     if (fd < 0) {
-        fprintf(stderr, "sniff: socket(AF_PACKET): %s (need root/CAP_NET_RAW)\n",
+        fprintf(stderr, "nettk: socket(AF_PACKET): %s (need root/CAP_NET_RAW)\n",
                 strerror(errno));
         return -1;
     }
@@ -96,7 +122,7 @@ int nt_live_open(nt_live *l, const char *iface)
     sll.sll_protocol = htons(ETH_P_ALL);
     sll.sll_ifindex = l->ifindex;
     if (bind(fd, (struct sockaddr *)&sll, sizeof sll) < 0) {
-        fprintf(stderr, "sniff: bind %s: %s\n", iface, strerror(errno));
+        fprintf(stderr, "nettk: bind %s: %s\n", iface, strerror(errno));
         close(fd);
         return -1;
     }
@@ -119,7 +145,7 @@ int nt_live_open(nt_live *l, const char *iface)
     (void)setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &rcvbuf, sizeof rcvbuf);
 
     if (drop_privileges() != 0) {
-        fprintf(stderr, "sniff: privilege drop failed: %s\n", strerror(errno));
+        fprintf(stderr, "nettk: privilege drop failed: %s\n", strerror(errno));
         close(fd);
         return -1;
     }
@@ -147,7 +173,7 @@ int nt_live_next(nt_live *l, uint8_t *buf, size_t cap, size_t *caplen, uint64_t 
     if (n < 0) {
         if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)
             return 0;
-        fprintf(stderr, "sniff: recvmsg: %s\n", strerror(errno));
+        fprintf(stderr, "nettk: recvmsg: %s\n", strerror(errno));
         return -1;
     }
 

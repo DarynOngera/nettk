@@ -1,7 +1,13 @@
-# Usage: getting to Phase 0 done
+# Usage and lab guide
 
 Working order, exact commands, acceptance criteria. Run everything from the repo root
 (`nettk/`). Root is needed for the lab only.
+
+> **This is a learning lab.** Every active tool (ping, traceroute, ARP/NDP sends, scanner, spoofer)
+> is confined to disposable `nt-*` network namespaces on a virtual veth fabric. Nothing here may be
+> pointed at a real network. The goal is to *see* what the kernel puts on the wire and to break it on
+> purpose: follow the "predict before you run" prompts, read the pcaps in `captures/`, and match your
+> output against tcpdump/tshark/ping/traceroute every time.
 
 ## 1. Dependencies
 
@@ -158,6 +164,55 @@ If `clang` is missing, `make fuzz` stops with `clang required for libFuzzer`; in
 - [ ] `sudo scripts/lab-validation.sh` PASS; `CapEff` shows only `cap_net_raw`
 - [ ] break-and-debug write-up and security note in `docs/phase1.md`
 
+## 9. Phase 2+3: active tools (ping, traceroute, ARP, NDP)
+
+Orchestration, byte layouts and the hardening notes are in `docs/phase2-3.md`.
+
+```bash
+make BUILD=asan all
+sudo lab/up.sh basic          # h1 -- rtr -- h2, IPv4 + IPv6
+```
+
+Every sending tool refuses to run unless `NT_LAB=1` (set by `lab/ex`) and the target is a lab address
+(`10.0.0.0/16`, `fd00::/8` or `2001:db8::/32`); ARP/NDP also require a `veth` interface. So you always
+run them through `lab/ex <host> ...`:
+
+| Tool | Example | What to watch |
+|---|---|---|
+| `ping` | `sudo lab/ex h1 ping -c2 10.0.2.2` | reply `ttl=63` (one hop); the echoed payload is validated byte-for-byte |
+| `ping -6` | `sudo lab/ex h1 ping -6 -c2 fd00:2::2` | hop limit 63; the first packet triggers ND |
+| `traceroute` | `sudo lab/ex h1 traceroute -n 10.0.2.2` | hop list (UDP probes by default) |
+| `traceroute -I` | `sudo lab/ex h1 traceroute -n -I 10.0.2.2` | ICMP-echo probes |
+| `arp` | `sudo lab/ex h1 arp -i eth0 -c1 10.0.1.1` | `is-at <mac>` |
+| `arp scan` | `sudo lab/ex h1 arp scan -i eth0 10.0.1.0/24` | one line per live neighbour |
+| `ndp` | `sudo lab/ex h1 ndp -i eth0 -c1 fd00:1::1` | an NA is accepted only at hop limit 255 |
+
+`arpmon` replays a capture looking for ARP attacks (no root, no lab needed):
+
+```bash
+make arpmon-check          # all 6 rules fire on fixtures/arp-spoof.pcap
+```
+
+Self-checks (root, and only touch `nt-*`):
+
+```bash
+sudo lab/check.sh                    # 13 smoke checks on the active topology
+sudo lab/scenarios-traceroute.sh     # !N / !X / !F (line4)
+sudo lab/scenarios-arp.sh            # hostile ARP responders (bridge3)
+sudo lab/scenarios-ndp.sh            # hostile Neighbor Advertisements (basic)
+sudo lab/scenarios-spoof.sh          # poison, arpmon alert, restore-on-exit (bridge3)
+```
+
+**Try to break it — predict before you run:**
+
+1. Flush `h1`'s cache and ping the router: `sudo lab/ex h1 ip neigh flush all`, then
+   `sudo lab/ex h1 ping -c1 10.0.1.1`. Which frame causes the first packet's delay?
+2. `sudo lab/ex rtr sysctl -w net.ipv4.ip_forward=0`, then `traceroute -n 10.0.2.2`. Where does the
+   hop list stop, and which ICMP type/code comes back?
+3. `sudo lab/ex rtr ip link set r2 mtu 1400`, then `sudo lab/ex h1 traceroute -M do -s 1400 10.0.2.2`.
+   Which hop emits `!F mtu=1400`, and why is it flush-sensitive?
+4. Restore with `sudo lab/up.sh basic --force`.
+
 ## Knobs and safety
 
 `NT_OFFLOAD`, `NT_IPV6`, `NT_PREFIX`, `BUILD` — see the table in `README.md`.
@@ -165,6 +220,6 @@ Everything active runs inside `nt-*` namespaces only, never against a real netwo
 
 ## Next
 
-Phase 2 kickoff from `AGENTS.md` (socket tooling), once M0-M10 are signed off per
-`docs/phase1-prompt.md`.
+Phases 2+3 are complete (see `docs/phase2-3.md`). The next phase (raw sockets / TCP observation / DNS)
+kicks off from the template in `AGENTS.md`.
 
