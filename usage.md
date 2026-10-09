@@ -88,6 +88,76 @@ must only ever match `NT_PREFIX`.
 - [ ] security note
 - [ ] `sudo lab/down.sh && make phase0` cold, under a minute, without notes
 
+## 7. Phase 1: decode library + AF_PACKET sniffer
+
+Orchestration and evidence: `docs/phase1.md`. No root for anything below except live capture.
+
+### Build and decode tests
+
+```bash
+make BUILD=asan all                         # zero warnings
+make test                                   # 12 test binaries, ASan+UBSan
+scripts/diff-oracle.sh fixtures/basic.pcap  # sniff --tsv vs tshark: PASS 14
+scripts/diff-oracle.sh fixtures/ipv6.pcap   # PASS 5
+```
+
+`sniff` CLI (exactly one of `-r`/`-i`):
+
+```bash
+build/asan/bin/sniff -r <file> [--tsv] [-x] [-c N]   # decode a capture
+build/asan/bin/sniff -i <if>   [--tsv] [-x] [-c N]   # live capture (root)
+build/asan/bin/sniff -r <in> -w <out>                # faithful pcap copy
+build/asan/bin/sniff -i <if> -w <out>                # live capture to pcap
+```
+
+- `--tsv` is 25 columns matching `scripts/tshark-fields.sh` exactly (fragments explained in
+  `docs/phase1.md`).
+- `-x` is a hex dump with per-field offset annotations (`eth`, `ipv4`/`ipv6`, `tcp`/`udp`, `icmp`).
+- `malformed.pcap` decodes without crashing: `packets=9 truncated=5 malformed=3`.
+
+### pcap round trip (byte-identical)
+
+```bash
+build/asan/bin/sniff -r fixtures/basic.pcap -w /tmp/rt.pcap
+cmp fixtures/basic.pcap /tmp/rt.pcap   # IDENTICAL; tshark -r /tmp/rt.pcap works
+```
+
+### Live capture in the lab
+
+Live needs root only to open `AF_PACKET`; the process then drops to your user keeping only
+`CAP_NET_RAW` (verify with `grep Cap /proc/<pid>/status`).
+
+```bash
+make lab-up
+# capture on the router's h1-facing port while traffic flows:
+sudo ip netns exec nt-rtr build/asan/bin/sniff -i r1 --tsv -c 10 -w /tmp/live.pcap
+```
+
+One-shot validation (captures ping/TCP/DNS, diffs live `--tsv` against tshark, shows `CapEff`):
+
+```bash
+sudo scripts/lab-validation.sh          # or: sudo scripts/lab-validation.sh 80
+```
+
+### Fuzz (needs clang)
+
+```bash
+make fuzz-seeds                         # 28 seeds extracted from fixtures/*.pcap
+make fuzz-run                           # build + 5 minutes of libFuzzer
+```
+
+If `clang` is missing, `make fuzz` stops with `clang required for libFuzzer`; install `clang` first.
+
+## 8. Done when (Phase 1)
+
+- [ ] `make test`, `make san-test` green, zero warnings
+- [ ] `scripts/diff-oracle.sh` PASS on `basic.pcap` and `ipv6.pcap`
+- [ ] `malformed.pcap` per the M0 mapping, no sanitizer report
+- [ ] pcap round trip `cmp` identical
+- [ ] `make fuzz-run` clean for 5 minutes (needs clang)
+- [ ] `sudo scripts/lab-validation.sh` PASS; `CapEff` shows only `cap_net_raw`
+- [ ] break-and-debug write-up and security note in `docs/phase1.md`
+
 ## Knobs and safety
 
 `NT_OFFLOAD`, `NT_IPV6`, `NT_PREFIX`, `BUILD` — see the table in `README.md`.
@@ -95,6 +165,6 @@ Everything active runs inside `nt-*` namespaces only, never against a real netwo
 
 ## Next
 
-Phase 1 kickoff from `AGENTS.md` (decode library + AF_PACKET sniffer), oracle:
-`scripts/tshark-fields.sh` diffed against the sniffer's TSV output, seeds from
-`fixtures/basic.pcap` and `fixtures/malformed.pcap`.
+Phase 2 kickoff from `AGENTS.md` (socket tooling), once M0-M10 are signed off per
+`docs/phase1-prompt.md`.
+

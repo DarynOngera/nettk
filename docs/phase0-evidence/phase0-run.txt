@@ -1,0 +1,37 @@
+make san-test
+make[1]: Entering directory '/home/ongera/sec/network-lab/nettk'
+cc -std=c11 -D_GNU_SOURCE -g -fno-omit-frame-pointer -Wall -Wextra -Wpedantic -Wshadow -Wformat=2 -Wstrict-prototypes -Wmissing-prototypes -O1 -fsanitize=address,undefined -fno-sanitize=object-size -fno-sanitize-recover=undefined -Isrc/lib -MMD -MP -c src/smoke/smoke.c -o build/asan/obj/smoke/smoke.o
+cc build/asan/obj/smoke/smoke.o -o build/asan/bin/smoke -fsanitize=address,undefined
+ok: --asan-test tripped (AddressSanitizer)
+ok: --ubsan-test tripped (runtime error)
+make[1]: Leaving directory '/home/ongera/sec/network-lab/nettk'
+make fixtures
+make[1]: Entering directory '/home/ongera/sec/network-lab/nettk'
+python3 py/gen_fixtures.py fixtures
+wrote fixtures/basic.pcap and fixtures/malformed.pcap
+make[1]: Leaving directory '/home/ongera/sec/network-lab/nettk'
+make lab-up
+make[1]: Entering directory '/home/ongera/sec/network-lab/nettk'
+sudo lab/up.sh basic --force
+removed nt-h2
+removed nt-rtr
+removed nt-h1
+lab 'basic' is up.
+  sudo lab/ex h1 ping -c2 10.0.2.2        # routed path, TTL 63 on the reply
+  sudo lab/cap.sh rtr r1 icmp              # capture on the router's h1-facing port
+  sudo lab/status.sh                       # addresses, routes, neighbours
+make[1]: Leaving directory '/home/ongera/sec/network-lab/nettk'
+make lab-check
+make[1]: Entering directory '/home/ongera/sec/network-lab/nettk'
+sudo lab/check.sh
+PASS  h1 -> rtr (L2 neighbour)
+PASS  h1 -> h2 across the router
+PASS  TTL on routed reply is 63 (one hop)
+PASS  TTL to direct neighbour is 64
+PASS  router forwards IPv4
+PASS  tcpdump sees ICMP on rtr/r1
+PASS  tx checksum offload off on h1/eth0
+PASS  AF_PACKET raw socket opens inside h1
+
+passed=8 failed=0 skipped=0
+make[1]: Leaving directory '/home/ongera/sec/network-lab/nettk'

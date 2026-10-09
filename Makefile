@@ -49,7 +49,7 @@ $(OUT)/bin/$(1): $$($(1)_OBJ) $$(LIBDEP)
 endef
 $(foreach t,$(TOOLS),$(eval $(call TOOL_RULE,$(t))))
 
-.PHONY: all help clean san-test fuzz fixtures deps \
+.PHONY: all help clean test san-test fuzz fuzz-seeds fuzz-run fixtures deps \
         lab-up lab-down lab-status lab-check phase0
 
 all: $(BINS) ## build every tool (BUILD=asan|tsan|release)
@@ -64,6 +64,22 @@ $(OUT)/obj/%.o: src/%.c
 
 -include $(shell find $(OUT)/obj -name '*.d' 2>/dev/null)
 
+# tests/unit/test_*.c -> $(OUT)/tests/<name>, each linking libnettk.a
+TEST_SRC := $(wildcard tests/unit/test_*.c)
+TEST_BIN := $(patsubst tests/unit/%.c,$(OUT)/tests/%,$(TEST_SRC))
+
+# pcap lives in the tool (it does I/O), so its test links pcap.c explicitly.
+$(OUT)/tests/test_pcap: tests/unit/test_pcap.c src/sniff/pcap.c $(LIB) $(LIB_SRC)
+> @mkdir -p $(@D)
+> $(CC) $(CFLAGS) -Isrc/sniff $< src/sniff/pcap.c $(LIB) -o $@ $(LDFLAGS)
+
+$(OUT)/tests/%: tests/unit/%.c $(LIB) $(LIB_SRC)
+> @mkdir -p $(@D)
+> $(CC) $(CFLAGS) $< $(LIB) -o $@ $(LDFLAGS)
+
+test: $(TEST_BIN) ## build and run unit tests (BUILD=asan|tsan|release)
+> @fail=0; for t in $(TEST_BIN); do echo "== $$t"; "$$t" || fail=1; done; exit $$fail
+
 san-test: ## prove the sanitizers really catch bugs
 > @$(MAKE) --no-print-directory BUILD=asan build/asan/bin/smoke
 > @tests/sanitizer_check.sh build/asan/bin/smoke
@@ -74,6 +90,12 @@ fuzz: ## build libFuzzer targets (needs clang)
 > @for f in fuzz/fuzz_*.c; do n=$$(basename $$f .c); \
 >   clang -g -O1 -fsanitize=fuzzer,address,undefined -Isrc/lib $$f $(LIB_SRC) -o build/fuzz/$$n \
 >   && echo "built build/fuzz/$$n"; done
+
+fuzz-seeds: fixtures ## extract raw-packet fuzz seeds from fixtures/*.pcap
+> scripts/fuzz-seeds.sh fuzz/corpus
+
+fuzz-run: fuzz fuzz-seeds ## build and fuzz for 5 minutes
+> build/fuzz/fuzz_decode fuzz/corpus -max_total_time=300 -print_final_stats=1
 
 fixtures: ## generate scapy test captures into fixtures/
 > python3 py/gen_fixtures.py fixtures
