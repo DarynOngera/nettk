@@ -10,6 +10,11 @@ fixtures/*
 !fixtures/.gitkeep
 docs/phase0-evidence/*.pcap
 docs/phase0-evidence/*.pcapng
+docs/phase1-evidence/*.pcap
+docs/phase1-evidence/*.pcapng
+
+# generated fuzz corpus
+fuzz/corpus/
 
 # python
 __pycache__/

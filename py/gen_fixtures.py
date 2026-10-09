@@ -3,7 +3,8 @@
 
 usage: py/gen_fixtures.py [outdir]     (default: fixtures)
 
-  basic.pcap      well-formed traffic: ARP, ICMP, TCP (options), UDP/DNS, 802.1Q, fragments
+  basic.pcap      well-formed IPv4: ARP, ICMP, TCP (options), UDP/DNS, 802.1Q, fragments
+  ipv6.pcap       well-formed IPv6: ICMPv6 echo, NDP NS/NA, UDP
   malformed.pcap  hostile frames: truncation, bad IHL, bad TCP offset, oversize totlen,
                   looping DNS compression pointer. A decoder must reject these cleanly.
 Timestamps are fixed so output is byte-for-byte reproducible.
@@ -12,11 +13,15 @@ import struct
 import sys
 from pathlib import Path
 
-from scapy.all import (ARP, DNS, DNSQR, DNSRR, ICMP, IP, TCP, UDP, Dot1Q, Ether,
-                       Raw, fragment, raw, wrpcap)
+from scapy.all import (ARP, DNS, DNSQR, DNSRR, ICMP, ICMPv6EchoReply,
+                       ICMPv6EchoRequest, ICMPv6ND_NA, ICMPv6ND_NS,
+                       ICMPv6NDOptDstLLAddr, ICMPv6NDOptSrcLLAddr, IP, IPv6,
+                       TCP, UDP, Dot1Q, Ether, Raw, fragment, raw, wrpcap)
 
 H1, H2, RT = "02:00:00:00:01:02", "02:00:00:00:02:02", "02:00:00:00:01:01"
 IP1, IP2, GW = "10.0.1.2", "10.0.2.2", "10.0.1.1"
+V6A, V6B = "fd00::1:2", "fd00::2:2"
+LL1, LL2 = "fe80::200:ff:fe00:102", "fe80::200:ff:fe00:202"
 
 
 def stamp(pkts):
@@ -60,6 +65,22 @@ def basic():
     return stamp(pk)
 
 
+def ipv6():
+    pk = []
+    pk.append(Ether(src=H1, dst=RT) / IPv6(src=V6A, dst=V6B, hlim=64) /
+              ICMPv6EchoRequest(id=0x1234, seq=1) / Raw(b"v6-ping"))
+    pk.append(Ether(src=RT, dst=H1) / IPv6(src=V6B, dst=V6A, hlim=63) /
+              ICMPv6EchoReply(id=0x1234, seq=1) / Raw(b"v6-ping"))
+    pk.append(Ether(src=H1, dst="33:33:ff:00:02:02") /
+              IPv6(src=LL1, dst="ff02::1:ff00:202", hlim=255) /
+              ICMPv6ND_NS(tgt=V6B) / ICMPv6NDOptSrcLLAddr(lladdr=H1))
+    pk.append(Ether(src=RT, dst=H1) / IPv6(src=V6B, dst=LL1, hlim=255) /
+              ICMPv6ND_NA(tgt=V6B, R=0, S=0, O=1) / ICMPv6NDOptDstLLAddr(lladdr=RT))
+    pk.append(Ether(src=H1, dst=RT) / IPv6(src=V6A, dst=V6B, hlim=64) /
+              UDP(sport=53000, dport=53) / Raw(b"\x00\x01" + b"q" * 6))
+    return stamp(pk)
+
+
 def malformed():
     base = bytes(Ether(src=H1, dst=RT) / IP(src=IP1, dst=IP2) / TCP(sport=1, dport=2) / Raw(b"x" * 8))
     frames = []
@@ -97,8 +118,9 @@ def main():
     out = Path(sys.argv[1] if len(sys.argv) > 1 else "fixtures")
     out.mkdir(parents=True, exist_ok=True)
     wrpcap(str(out / "basic.pcap"), basic())
+    wrpcap(str(out / "ipv6.pcap"), ipv6())
     write_raw_pcap(out / "malformed.pcap", malformed())
-    print(f"wrote {out/'basic.pcap'} and {out/'malformed.pcap'}")
+    print(f"wrote {out/'basic.pcap'}, {out/'ipv6.pcap'} and {out/'malformed.pcap'}")
 
 
 if __name__ == "__main__":
