@@ -26,7 +26,7 @@ topo_up() {
 topo_hint() {
   cat <<'HINT'
   sudo lab/ex h1 ping -c2 10.0.2.2        # two-router path, TTL 62 on the reply
-  sudo lab/ex h1 traceroute -n 10.0.2.2   # hops 10.0.1.1, 10.0.9.1, 10.0.9.2, 10.0.2.2
+  sudo lab/ex h1 traceroute -n 10.0.2.2   # r1 first, then the 10.0.9.0/30, then h2
   sudo lab/cap.sh r1 e1 icmp              # capture on the first hop
   sudo lab/status.sh                       # addresses, routes, neighbours
 HINT

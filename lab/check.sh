@@ -11,9 +11,17 @@ topo=$(cat "$NT_STATE" 2>/dev/null || true)
 [[ -n "$topo" ]] || { echo "lab is down (run: sudo lab/up.sh)"; exit 1; }
 
 pass=0; fail=0; skip=0
-ok()   { echo "PASS  $1"; pass=$((pass+1)); }
-bad()  { echo "FAIL  $1"; fail=$((fail+1)); }
-skp()  { echo "SKIP  $1"; skip=$((skip+1)); }
+WHY_MODE=0
+for a in "$@"; do [[ $a == --why ]] && WHY_MODE=1; done
+CUR_WHY=""
+why() { CUR_WHY="$1"; }
+ok()   { echo "PASS  $1"; _why; pass=$((pass+1)); }
+bad()  { echo "FAIL  $1"; _why; fail=$((fail+1)); }
+skp()  { echo "SKIP  $1"; _why; skip=$((skip+1)); }
+_why() {
+  if [[ $WHY_MODE == 1 && -n $CUR_WHY ]]; then echo "      why: $CUR_WHY"; fi
+  CUR_WHY=""
+}
 t()    { local d=$1; shift; if "$@" >/dev/null 2>&1; then ok "$d"; else bad "$d"; fi; }
 t_skip2() { local d=$1; shift; "$@"; case $? in 0) ok "$d";; 2) skp "$d";; *) bad "$d";; esac; }
 
@@ -101,36 +109,59 @@ offload_off() {
 
 case "$topo" in
   basic)
+    why "ARP resolved rtr and the reply's TTL proves zero routed hops inside the segment"
     t "h1 -> rtr (L2 neighbour)"            nt_ex h1 ping -c1 -W1 10.0.1.1
+    why "rtr agreed to carry a packet for a non-local net: that is forwarding"
     t "h1 -> h2 across the router"           nt_ex h1 ping -c1 -W1 10.0.2.2
+    why "one routed hop = one TTL decrement; the counter runs per device, not per metre"
     t "TTL on routed reply is 63 (one hop)"  ping_ttl h1 10.0.2.2 63
+    why "same counter, untouched: a direct neighbour's reply never passed a router"
     t "TTL to direct neighbour is 64"        ping_ttl h1 10.0.1.1 64
     # -c2: the first echo can race the router's NDP for fd00:2::2 on a cold cache.
+    why "v6 path works: ND resolved the next hop, rtr forwarded, hop limit 63 on the reply"
     t "h1 -> h2 IPv6 across the router"      nt_ex h1 ping -6 -c2 -W1 fd00:2::2
+    why "our hop list == traceroute(8) address-for-address on the same probes"
     t_skip2 "traceroute UDP hop list matches oracle" trace_oracle_match h1 10.0.2.2
+    why "the ICMP-echo probe variant agrees with the oracle too"
     t_skip2 "traceroute ICMP hop list matches oracle" trace_oracle_match h1 10.0.2.2 icmp
+    why "two independent resolvers bind 10.0.1.1 to the same MAC"
     t_skip2 "arp MAC matches arping"         arp_oracle_match h1 eth0 10.0.1.1
+    why "the MAC from a Neighbor Advertisement matches the kernel's own ND table"
     t_skip2 "ndp MAC matches ip -6 neigh"    ndp_oracle_match h1 eth0 fd00:1::1
+    why "the sysctl that makes rtr a router is still on"
     t "router forwards IPv4"                 test "$(nt_ex rtr sysctl -n net.ipv4.ip_forward)" = 1
+    why "a capture source and a forwarding path both work on the router"
     t "tcpdump sees ICMP on rtr/r1"          cap_works rtr r1 h1 10.0.2.2
     cap_dst="eth0"; cap_host=h1
     ;;
   bridge3)
+    why "same L2 segment: no router on the path at all"
     t "h1 -> h2 (same L2 segment)"           nt_ex h1 ping -c1 -W1 10.0.0.2
+    why "a second neighbour in the same broadcast domain"
     t "h1 -> h3 (same L2 segment)"           nt_ex h1 ping -c1 -W1 10.0.0.3
+    why "unicast inside one segment crosses zero decrementers"
     t "TTL stays 64 inside one segment"      ping_ttl h1 10.0.0.3 64
+    why "the bridge learned h1's MAC from the ping's source address"
     t "bridge learned h1's MAC"              bash -c "ip netns exec ${NT_PREFIX}sw bridge fdb show br br0 | grep -qi 02:00:00:00:00:01"
+    why "h2's port saw the traffic: unicast was delivered, not flooded everywhere"
     t "tcpdump sees ICMP on h2/eth0"         cap_works h2 eth0 h1 10.0.0.2
+    why "ARP-ping host discovery (ours and nmap -sn -PR) list the same live set"
     t_skip2 "arp scan matches nmap -sn -PR"  scan_oracle_match h1 eth0 10.0.0.0/24 10.0.0.1
     cap_dst="eth0"; cap_host=h1
     ;;
   line4)
+    why "two routers both agreed to forward a packet for the far net"
     t "h1 -> h2 across two routers"          nt_ex h1 ping -c1 -W1 10.0.2.2
+    why "two decrements total: the bill for crossing two devices"
     t "TTL on routed reply is 62 (two hops)" ping_ttl h1 10.0.2.2 62
+    why "each router is independently a router, not just the first one"
     t "first router forwards IPv4"           test "$(nt_ex r1 sysctl -n net.ipv4.ip_forward)" = 1
     t "second router forwards IPv4"          test "$(nt_ex r2 sysctl -n net.ipv4.ip_forward)" = 1
+    why "our hop list across the /30 matches traceroute(8)"
     t_skip2 "traceroute UDP hop list matches oracle" trace_oracle_match h1 10.0.2.2
+    why "the ICMP-probe variant agrees with the oracle"
     t_skip2 "traceroute ICMP hop list matches oracle" trace_oracle_match h1 10.0.2.2 icmp
+    why "a capture on the first router's h1-facing port can see both directions"
     t "tcpdump sees ICMP on r1/e1"           cap_works r1 e1 h1 10.0.2.2
     cap_dst="e1"; cap_host=r1
     ;;
@@ -140,6 +171,7 @@ esac
 if [[ "${NT_OFFLOAD:-0}" == 1 ]]; then
   skp "offloads disabled (NT_OFFLOAD=1)"
 else
+  why "captures show real wire bytes, not hardware-stamped checksums"
   offload_off "$cap_host" "$cap_dst"; rc=$?
   if [[ $rc -eq 0 ]]; then ok "tx checksum offload off on $cap_host/$cap_dst"
   elif [[ $rc -eq 2 ]]; then skp "ethtool not installed"
@@ -148,6 +180,7 @@ fi
 
 smoke="$root/build/asan/bin/smoke"
 if [[ -x $smoke ]]; then
+  why "an AF_PACKET raw socket opens inside the namespace: the basis of every later tool"
   t "AF_PACKET raw socket opens inside $cap_host" nt_ex "$cap_host" "$smoke"
 else
   skp "smoke binary not built (make BUILD=asan)"

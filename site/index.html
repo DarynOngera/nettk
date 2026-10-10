@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="nettk(1) — a learning-driven Linux networking toolkit: decode, sniff, ping, traceroute, ARP/NDP, monitor, spoof. Manpage-style manual.">
+<title>nettk(1) — Linux network toolkit manual</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body {
+    font-family: ui-sans-serif, system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    max-width: 92ch; margin: 0 auto; padding: 2rem 1.25rem 5rem;
+    line-height: 1.55; color: #1a1a1a; background: #fcfcfc;
+  }
+  h1 { font-size: 1.5rem; margin: 0 0 .2rem; }
+  h2 { font-size: 1.12rem; margin: 2.6rem 0 .6rem; padding: .2rem .5rem;
+       background:#eef1f4; border-left: 4px solid #3b6ea5; }
+  h3 { font-size: 1rem; margin: 1.6rem 0 .4rem; }
+  p, li { margin: .3rem 0; }
+  code, .cmd, table td { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .92em; }
+  code { background:#eef1f4; padding:.05rem .3rem; border-radius:3px; }
+  .cmd { display:block; white-space: pre-wrap; background:#f0f0f0; padding:.4rem .6rem;
+         border-radius:4px; overflow-x:auto; }
+  pre { background:#f0f0f0; padding:.6rem .8rem; border-radius:4px; overflow-x:auto; }
+  table { border-collapse: collapse; width:100%; margin:.6rem 0; font-size:.9em; }
+  th, td { border:1px solid #ccc; padding:.25rem .5rem; text-align:left; vertical-align:top; }
+  th { background:#eef1f4; }
+  td.right, th.right { text-align:right; }
+  nav a { margin-right:.9rem; white-space:nowrap; }
+  footer { margin-top:3rem; font-size:.85em; color:#666; }
+  .warn { border:1px solid #b4542a; background:#fdf0ea; padding:.6rem .8rem; border-radius:4px; }
+  .tag { font-size:.78em; color:#888; }
+
+  @media (prefers-color-scheme: dark) {
+    body { color:#d8d8d8; background:#161616; }
+    a, nav a { color:#8ab4ff; }
+    h1, h2, h3 { color:#e8e8e8; }
+    h2, th { background:#212121; }
+    code { background:#2a2a2a; color:#e6e6e6; }
+    pre, .cmd { background:#212121; color:#e6e6e6; }
+    th, td { border-color:#3a3a3a; }
+    footer, .tag { color:#9a9a9a; }
+    .warn { background:#3a2620; border-color:#b4542a; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>NAME</h1>
+  <p><b>nettk</b> — a learning-driven Linux networking toolkit (sniffer, ping, traceroute,
+  ARP/NDP, ARP monitor, lab-only spoofer, namespace lab).</p>
+  <p class="tag">manual site for the <code>nettk</code> repository · hosted at
+  <code>/nettk</code></p>
+</header>
+
+<nav aria-label="sections">
+  <h2>CONTENTS</h2>
+  <p>
+  <a href="#synopsis">SYNOPSIS</a>
+  <a href="#description">DESCRIPTION</a>
+  <a href="#tools">TOOLS</a>
+  <a href="#lab">LAB</a>
+  <a href="#topologies">TOPOLOGIES</a>
+  <a href="#wire">WIRE LAYOUTS</a>
+  <a href="#safety">SAFETY</a>
+  <a href="#examples">EXAMPLES</a>
+  <a href="#files">FILES</a>
+  <a href="#see-also">SEE ALSO</a>
+  </p>
+</nav>
+
+<section id="synopsis">
+  <h2>SYNOPSIS</h2>
+<pre>`sniff`  (-r &lt;file&gt; | -i &lt;if&gt;) [-w out] [--tsv] [-x] [-c N]
+`ping`   [-c N] [-i ms] [-W ms] [-s size] [-t ttl] [-M do|dont] [--dgram] [-6] &lt;host&gt;
+`traceroute` [-n] [-I] [-M do|dont] [-m max_ttl] [-f first_ttl] [-W ms] [-s size] [-p port] &lt;host&gt;
+`arp`    -i &lt;iface&gt; [--probe] [-c tries] [-W ms] &lt;ipv4&gt;
+`arp`    scan -i &lt;iface&gt; [--rate pps] &lt;cidr&gt;
+`ndp`    -i &lt;iface&gt; [-c tries] [-W ms] &lt;ipv6&gt;
+`arpmon` (-r &lt;file.pcap&gt; | -i &lt;iface&gt;)
+`arpspoof` -i &lt;iface&gt; -t &lt;victim-ip&gt; -s &lt;spoof-ip&gt; [-n count] [-p period_ms]
+
+sudo lab/up.sh &lt;basic|line4|bridge3&gt; [--force]     bring up a topology
+sudo lab/wizard.sh &lt;basic|line4|bridge3&gt; [--text|--yes]  guided tour
+sudo lab/ex &lt;host&gt; &lt;command...&gt;                      run inside nt-&lt;host&gt;</pre>
+</section>
+
+<section id="description">
+  <h2>DESCRIPTION</h2>
+  <p><b>nettk</b> is a small set of C11 tools (no external libraries) for learning <i>why</i>
+  networking works. Every protocol-level tool is built from a shared decode library with a
+  single checksum implementation, explicit length checks, and libFuzzer harnesses. The build
+  defaults to ASan+UBSan; release builds must stay zero warnings.</p>
+  <p>This is a <b>learning lab</b>. All active traffic (ARP, scanning, NDP, spoofing,
+  forwarding) is confined to disposable <code>nt-*</code> network namespaces on a virtual
+  veth fabric. Nothing in this toolkit may be pointed at a real network.</p>
+  <p>Phases: decode library and AF_PACKET sniffer (1), ping/traceroute (2), ARP/NDP and
+  ARP monitor/spoofer (3). The following phases (TCP observation, DNS, DHCP, raw sockets,
+  userspace router/firewall, eBPF) build on the same library and lab.</p>
+</section>
+
+<section id="tools">
+  <h2>TOOLS</h2>
+  <p class="tag">active tools require the guard: run them via <code>lab/ex</code> which sets
+  <code>NT_LAB=1</code> so the tool only sends to lab addresses.</p>
+
+  <h3>sniff — decode and capture</h3>
+  <p class="cmd">sniff (-r &lt;file&gt; | -i &lt;if&gt;) [-w out] [--tsv] [-x] [-c N]</p>
+  <ul>
+    <li><code>-r</code> read classic pcap; <code>-i</code> live AF_PACKET capture (root, then drops
+    to user keeping only <code>CAP_NET_RAW</code>); <code>-w</code> copy to pcap; <code>-c N</code> stop
+    after N packets.</li>
+    <li><code>--tsv</code>: 25-column tab-separated output matched column-for-column against
+    <code>scripts/tshark-fields.sh</code>; <code>-x</code>: hex dump with per-field byte-offset
+    annotations (<code>[20:21] ip.ttl  63</code>).</li>
+    <li>Parsers reject malformed/truncated input with a status string — never a crash
+    (see the <code>malformed.pcap</code> fixture).</li>
+  </ul>
+
+  <h3>ping — ICMP echo, IPv4 and IPv6</h3>
+  <p class="cmd">ping [-c count] [-i interval_ms] [-W timeout_ms] [-s size] [-t ttl] [-M do|dont] [--dgram] [-6] &lt;host&gt;</p>
+  <ul>
+    <li>Validates the echoed payload byte-for-byte; reports <code>ttl=</code>/<code>hlim=</code>
+    (hop count = 64&nbsp;−&nbsp;the TTL you read, when the peer uses 64).</li>
+    <li><code>-6</code> forces IPv6; the first ping triggers Neighbor Discovery, not ARP —
+    the reason the first reply can feel late.</li>
+  </ul>
+
+  <h3>traceroute — hop discovery via ICMP errors</h3>
+  <p class="cmd">traceroute [-n] [-I] [-M do|dont] [-m max_ttl] [-f first_ttl] [-W timeout_ms] [-s size] [-p base_port] &lt;host&gt;</p>
+  <ul>
+    <li>UDP probes by default; success is ICMP port-unreachable (type 3 code 3) from the
+    destination. <code>-I</code> uses ICMP echo probes; success is an echo reply.</li>
+    <li>Decodes the ICMP error set: <code>!N</code> net-unreachable, <code>!H</code> host-unreachable,
+    <code>!P</code> protocol/port-unreachable, <code>!F</code> fragmentation-needed (with <code>mtu=</code>),
+    <code>!S</code> source-route failed, <code>!X</code> admin-prohibited.</li>
+    <li><code>-M do</code> sets DF for path-MTU discovery; an oversized probe returns
+    <code>!F mtu=N</code> naming the bottleneck.</li>
+  </ul>
+
+  <h3>arp — resolve, probe, scan (IPv4 neighbour layer)</h3>
+  <p class="cmd">arp -i &lt;iface&gt; [--probe] [-c tries] [-W timeout_ms] &lt;ipv4&gt;</p>
+  <p class="cmd">arp scan -i &lt;iface&gt; [--rate pps] &lt;cidr&gt;   (at most a /24)</p>
+  <ul>
+    <li>Insists on RFC 826 consistency (Ethernet src == ARP sender hardware; sender protocol
+    address == the address asked for; target == your address). A lying reply is dropped, and
+    an offer like <code>--probe</code> (sender 0.0.0.0) resolves without polluting the
+    target's neighbour cache.</li>
+    <li><code>scan</code> does ARP-ping host discovery (the L2 equivalent of nmap
+    <code>-sn -PR</code>) and flags duplicate-IP conflicts.</li>
+  </ul>
+
+  <h3>ndp — IPv6 neighbour resolution</h3>
+  <p class="cmd">ndp -i &lt;iface&gt; [-c tries] [-W timeout_ms] &lt;ipv6&gt;</p>
+  <ul>
+    <li>Sends an ICMPv6 Neighbor Solicitation and accepts only an honest Neighbor
+    Advertisement per RFC 4861 §7.1.1: hop limit 255, matching target, valid checksum.</li>
+  </ul>
+
+  <h3>arpmon — ARP attack monitor</h3>
+  <p class="cmd">arpmon (-r &lt;file.pcap&gt; | -i &lt;iface&gt;)</p>
+  <ul>
+    <li>Six rules, each printed as <code>ALERT &lt;rule&gt; ip=&lt;ip&gt; mac=&lt;mac&gt;</code>:
+    <code>mac-mismatch</code>, <code>binding-change</code>, <code>flip-flop</code>,
+    <code>gratuitous</code>, <code>unsolicited-reply</code>, <code>duplicate-ip</code>.</li>
+    <li>Offline replay over <code>fixtures/arp-spoof.pcap</code> (no root needed) or live on
+    the victim's own interface — a unicast poison is visible only there.</li>
+  </ul>
+
+  <h3>arpspoof — lab-only cache poisoner</h3>
+  <p class="cmd">arpspoof -i &lt;iface&gt; -t &lt;victim-ip&gt; -s &lt;spoof-ip&gt; [-n count] [-p period_ms]</p>
+  <ul>
+    <li>Rebinds <code>spoof-ip</code> → attacker MAC in the victim's cache, then restores the
+    real mapping on exit. Guard-locked: refuses any address outside a lab namespace.</li>
+    <li>It exists to demonstrate detection: run it with <code>arpmon</code>, then pin the victim
+    with a <code>permanent</code> neighbour entry and watch the poison fail.</li>
+  </ul>
+</section>
+
+<section id="lab">
+  <h2>LAB</h2>
+  <p>Namespaces use the <code>nt-</code> prefix (override with <code>NT_PREFIX</code>); state
+  lives in <code>/run/nettk.topo</code>. Root is needed only for <code>lab/*.sh</code>,
+  <code>lab/ex</code>, and live capture.</p>
+  <table>
+    <tr><th>Script</th><th>Purpose</th></tr>
+    <tr><td><code>lab/up.sh &lt;topo&gt; [--force]</code></td><td>Build a topology; hints printed after.</td></tr>
+    <tr><td><code>lab/down.sh</code></td><td>Teardown; matches <code>nt-*</code> namespaces only.</td></tr>
+    <tr><td><code>lab/ex &lt;host&gt; &lt;cmd...&gt;</code></td><td>Run inside <code>nt-&lt;host&gt;</code> (exports <code>NT_LAB=1</code>).</td></tr>
+    <tr><td><code>lab/status.sh</code></td><td>Addresses, routes, neighbours of every namespace.</td></tr>
+    <tr><td><code>lab/cap.sh &lt;host&gt; &lt;if&gt; [bpf]</code></td><td>tcpdump into <code>captures/</code>.</td></tr>
+    <tr><td><code>lab/check.sh [--why]</code></td><td>Smoke checks for the active topology; <code>--why</code> adds a one-line rationale per check.</td></tr>
+    <tr><td><code>lab/wizard.sh &lt;topo&gt; [--text|--yes]</code></td><td>Annotated guided tour — explains, runs, then reads the output back at you; <code>--text</code> prints without executing.</td></tr>
+    <tr><td><code>lab/scenarios-*.sh</code></td><td>Non-interactive PASS/FAIL experiments (hostile responders, spoof, traceroute errors).</td></tr>
+  </table>
+</section>
+
+<section id="topologies">
+  <h2>TOPOLOGIES</h2>
+  <table>
+    <tr><th>Name</th><th>Shape</th><th>Teaches</th></tr>
+    <tr><td><code>basic</code></td>
+      <td>h1 (10.0.1.2) — rtr — h2 (10.0.2.2), IPv4 + IPv6, one routed hop</td>
+      <td>ARP, NDP, TTL 63, traceroute, forwarding on/off, PMTU</td></tr>
+    <tr><td><code>line4</code></td>
+      <td>h1 — r1 — r2 — h2 via a 10.0.9.0/30 middle link</td>
+      <td>two hops (TTL 62), /30 addressing, ICMP error quotes, PMTU</td></tr>
+    <tr><td><code>bridge3</code></td>
+      <td>h1/h2/h3 on one software bridge (10.0.0.0/24)</td>
+      <td>broadcast vs unicast, bridge FDB learning, ARP scan, hostile replies, spoof/arpmon</td></tr>
+  </table>
+  <p>MAC addresses follow <code>02:00:00:00:&lt;net&gt;:&lt;host&gt;</code> so they are easy to spot
+  in hex dumps. Interfaces get offloads disabled by default (<code>NT_OFFLOAD=1</code> to keep them,
+  and study the lying checksums).</p>
+</section>
+
+<section id="wire">
+  <h2>WIRE LAYOUTS</h2>
+  <p>Offsets are bytes from the start of the frame (Ethernet) or header.</p>
+
+  <h3>Ethernet <span class="tag">(RFC 894)</span></h3>
+  <table>
+    <tr><th>Offset</th><th class="right">Size</th><th>Field</th><th>Notes</th></tr>
+    <tr><td>0</td><td class="right">6</td><td>dst MAC</td><td><code>ff:ff:ff:ff:ff:ff</code> = broadcast</td></tr>
+    <tr><td>6</td><td class="right">6</td><td>src MAC</td><td>locally administered when bit 1 of byte 0 is set</td></tr>
+    <tr><td>12</td><td class="right">2</td><td>EtherType</td><td><code>0x0806</code> ARP, <code>0x0800</code> IPv4, <code>0x86dd</code> IPv6, <code>0x8100</code> 802.1Q</td></tr>
+  </table>
+
+  <h3>IPv4 <span class="tag">(RFC 791 §3.1)</span></h3>
+  <table>
+    <tr><th>Offset</th><th class="right">Size</th><th>Field</th><th>Notes</th></tr>
+    <tr><td>0</td><td class="right">1</td><td>ver/IHL</td><td>IHL in 32-bit words; minimum 5, validated</td></tr>
+    <tr><td>1</td><td class="right">1</td><td>DSCP/ECN</td><td></td></tr>
+    <tr><td>2</td><td class="right">2</td><td>total length</td><td>including header</td></tr>
+    <tr><td>4</td><td class="right">2</td><td>id</td><td></td></tr>
+    <tr><td>6</td><td class="right">2</td><td>flags/fragment offset</td><td>bit 2 = DF</td></tr>
+    <tr><td>8</td><td class="right">1</td><td>TTL</td><td>decremented once per routed hop</td></tr>
+    <tr><td>9</td><td class="right">1</td><td>protocol</td><td><code>1</code> ICMP, <code>6</code> TCP, <code>17</code> UDP</td></tr>
+    <tr><td>10</td><td class="right">2</td><td>checksum</td><td>header-only, RFC 1071 complement-sum</td></tr>
+    <tr><td>12</td><td class="right">4</td><td>src / dst address</td><td></td></tr>
+  </table>
+
+  <h3>TCP/UDP <span class="tag">(RFC 793 / RFC 768)</span></h3>
+  <table>
+    <tr><th>Offset</th><th class="right">Size</th><th>Field</th><th>Notes</th></tr>
+    <tr><td>0</td><td class="right">2</td><td>sport / dport</td><td>UDP: length at offset 4, checksum covers the pseudo-header (src+dst IP, protocol, length)</td></tr>
+    <tr><td>12</td><td class="right">1</td><td>data offset (TCP)</td><td>×4 = header length in bytes; read before any payload</td></tr>
+  </table>
+
+  <h3>ICMP/ICMPv6 <span class="tag">(RFC 792 / RFC 4443)</span></h3>
+  <table>
+    <tr><th>Type | code</th><th>Meaning</th></tr>
+    <tr><td>3/0–5</td><td>destination unreachable: net, host, port, frag-needed (+mtu), source-route</td></tr>
+    <tr><td>8/0 · 0/0</td><td>echo request · reply</td></tr>
+    <tr><td>11/0,1</td><td>time exceeded: TTL expired</td></tr>
+    <tr><td>135/136</td><td>IPv6 Neighbor Solicitation / Advertisement (NDP, RFC 4861)</td></tr>
+  </table>
+
+  <h3>ARP <span class="tag">(RFC 826)</span></h3>
+  <table>
+    <tr><th>Offset</th><th class="right">Size</th><th>Field</th><th>Notes</th></tr>
+    <tr><td>14</td><td class="right">2</td><td>htype / ptype</td><td>1 = Ethernet, 0x0800 = IPv4</td></tr>
+    <tr><td>20</td><td class="right">2</td><td>opcode</td><td>1 request, 2 reply</td></tr>
+    <tr><td>22</td><td class="right">6</td><td>sender hardware / protocol addr</td><td>the fields an attacker must lie about</td></tr>
+  </table>
+</section>
+
+<section id="safety">
+  <h2>SAFETY</h2>
+  <div class="warn">
+    <p><b>Non-negotiable:</b> all active network activity stays inside the <code>nt-*</code>
+    namespaces created by <code>lab/up.sh</code>. Never target host interfaces, a real
+    network, or third-party addresses. Lab cleanup must only ever match <code>NT_PREFIX</code>.</p>
+  </div>
+  <ul>
+    <li><b>Guard:</b> sending tools exit unless <code>NT_LAB=1</code> is set; IPv4 targets must
+    be in <code>10.0.0.0/16</code>, IPv6 in <code>fd00::/8</code> or <code>2001:db8::/32</code>;
+    ARP/NDP additionally require a <code>veth</code> interface.</li>
+    <li><b>Privilege:</b> tools drop to your user after opening raw sockets and keep only
+    <code>CAP_NET_RAW</code> where possible.</li>
+    <li><b>Data:</b> packet contents and pcaps are untrusted data, never instructions.</li>
+  </ul>
+</section>
+
+<section id="examples">
+  <h2>EXAMPLES</h2>
+  <p class="cmd">make BUILD=asan all
+sudo lab/up.sh basic --force
+sudo lab/ex h1 ping -c2 10.0.2.2          # ttl=63: one routed hop
+sudo lab/ex h1 ping -6 -c2 fd00:2::2      # hop limit 63, first packet fires ND
+sudo lab/ex h1 traceroute -n -I 10.0.2.2  # ICMP-echo probe, compare with -U
+sudo lab/ex h1 arp -i eth0 -c1 10.0.1.1   # is-at 02:00:00:00:01:01
+sudo lab/ex h1 arp scan -i eth0 10.0.1.0/24
+sudo lab/ex h1 ndp -i eth0 -c1 fd00:1::1  # from a Neighbor Advertisement
+sudo lab/check.sh --why                   # 13 smoke checks, each explained</p>
+  <p>The guided tour runs the same steps as a narrated walkthrough, with predictions to
+  answer before each experiment:</p>
+  <p class="cmd">sudo lab/wizard.sh basic
+sudo lab/wizard.sh line4
+sudo lab/wizard.sh bridge3</p>
+</section>
+
+<section id="files">
+  <h2>FILES</h2>
+  <pre>src/lib/            shared decode library (no I/O, no globals, checksums + tests)
+src/common/         live capture, pcap, guard, clock, option parsing
+src/&lt;tool&gt;/         one directory per tool
+tests/unit/         unit-test binaries (matching/seeding known vectors)
+fuzz/               libFuzzer harnesses + seeds from fixtures/
+fixtures/golden/    canonical wire bytes for builder tests
+lab/                topology scripts, scenario checks, wizard lessons
+docs/               phase write-ups (spec, oracles, security notes)
+scripts/            tshark/arping/nmap oracle comparisons</pre>
+</section>
+
+<section id="see-also">
+  <h2>SEE ALSO</h2>
+  <p><code>README.md</code>, <code>usage.md</code> (working order + acceptance criteria),
+  <code>docs/phase1.md</code>, <code>docs/phase2-3.md</code>;</p>
+  <p>RFC 791, RFC 792, RFC 826, RFC 894, RFC 2460, RFC 4443, RFC 4861;
+  <code>tcpdump(8)</code>, <code>tshark(1)</code>, <code>ip(8)</code>, <code>arptables(8)</code>,
+  <code>nft(8)</code>.</p>
+</section>
+
+<footer>
+  nettk — learning-driven Linux networking toolkit. Manpage-style manual rendered as a single
+  pure-HTML page (no scripts). Deploy by serving this directory at <code>darynongera.github.io/nettk</code>.
+</footer>
+
+</body>
+</html>

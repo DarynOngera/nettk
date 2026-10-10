@@ -18,8 +18,12 @@ sudo lab/ex h1 ping -6 -c2 fd00:2::2
 sudo lab/ex h1 traceroute -n 10.0.2.2
 sudo lab/cap.sh rtr r1 icmp          # pcap lands in captures/
 sudo lab/check.sh                    # 13 smoke checks (see usage.md)
+sudo lab/wizard.sh basic             # guided, annotated tour of the topology
 make lab-down
 ```
+
+A manpage-style manual (pure HTML, no scripts) lives in `site/index.html` —
+syntax, tools, topologies, wire-format tables, safety rules.
 
 Needs a real Linux kernel with namespaces (VM, bare metal, or WSL2). Containers need `--privileged`.
 
