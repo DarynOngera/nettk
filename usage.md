@@ -203,6 +203,32 @@ sudo lab/scenarios-ndp.sh            # hostile Neighbor Advertisements (basic)
 sudo lab/scenarios-spoof.sh          # poison, arpmon alert, restore-on-exit (bridge3)
 ```
 
+### The guided tour (wizard)
+
+`lab/check.sh` proves the lab works; the **wizard** explains *why* it does. Each topology has
+a narrated lesson that runs the real commands, then reads the output back and uncovers the
+mechanism (the ARP request that precedes the first ping, the `ttl=63` hop accounting, why a
+TTL-exceeded error names the *inbound* interface, how a bridge learns addresses by watching
+source MACs, how a lying ARP reply is dropped). Experiments pause for a multiple-choice
+prediction first, and odd moments open offline-looking captures decoded by our own sniffer.
+`--why` on `check.sh` gives the same one-line rationales without the narration.
+
+```bash
+sudo lab/up.sh basic && sudo lab/wizard.sh basic        # one routed hop, IPv4+IPv6
+sudo lab/up.sh line4 && sudo lab/wizard.sh line4        # two hops, /30, PMTU
+sudo lab/up.sh bridge3 && sudo lab/wizard.sh bridge3    # broadcast domain, ARP attacks
+sudo lab/check.sh --why                                 # smoke checks, each explained
+```
+
+`--text` prints the whole lesson without executing anything (no root) — useful to preview or
+to re-read a lesson. Lesson scripts live in `lab/learn/`.
+
+### Manpage site
+
+`site/index.html` is a manpage-style manual for the whole toolkit (syntax, tools, topologies,
+wire-format tables, safety rules). It is one pure-HTML page with no scripts, intended to be
+served at `darynongera.github.io/nettk`.
+
 **Try to break it — predict before you run:**
 
 1. Flush `h1`'s cache and ping the router: `sudo lab/ex h1 ip neigh flush all`, then
