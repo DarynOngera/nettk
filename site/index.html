@@ -13,18 +13,13 @@
     max-width: 92ch; margin: 0 auto; padding: 2rem 1.25rem 5rem;
     line-height: 1.55; color: #1a1a1a; background: #fcfcfc;
   }
-  @media (prefers-color-scheme: dark) {
-    body { color:#d8d8d8; background:#161616; }
-    a { color:#8ab4ff; }
-    code, pre, table th, .sec, .opt b { background:#212121; }
-    .cmd, h1, h2, h3 { color:#e8e8e8; }
-  }
   h1 { font-size: 1.5rem; margin: 0 0 .2rem; }
   h2 { font-size: 1.12rem; margin: 2.6rem 0 .6rem; padding: .2rem .5rem;
        background:#eef1f4; border-left: 4px solid #3b6ea5; }
   h3 { font-size: 1rem; margin: 1.6rem 0 .4rem; }
   p, li { margin: .3rem 0; }
   code, .cmd, table td { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .92em; }
+  code { background:#eef1f4; padding:.05rem .3rem; border-radius:3px; }
   .cmd { display:block; white-space: pre-wrap; background:#f0f0f0; padding:.4rem .6rem;
          border-radius:4px; overflow-x:auto; }
   pre { background:#f0f0f0; padding:.6rem .8rem; border-radius:4px; overflow-x:auto; }
@@ -36,6 +31,18 @@
   footer { margin-top:3rem; font-size:.85em; color:#666; }
   .warn { border:1px solid #b4542a; background:#fdf0ea; padding:.6rem .8rem; border-radius:4px; }
   .tag { font-size:.78em; color:#888; }
+
+  @media (prefers-color-scheme: dark) {
+    body { color:#d8d8d8; background:#161616; }
+    a, nav a { color:#8ab4ff; }
+    h1, h2, h3 { color:#e8e8e8; }
+    h2, th { background:#212121; }
+    code { background:#2a2a2a; color:#e6e6e6; }
+    pre, .cmd { background:#212121; color:#e6e6e6; }
+    th, td { border-color:#3a3a3a; }
+    footer, .tag { color:#9a9a9a; }
+    .warn { background:#3a2620; border-color:#b4542a; }
+  }
 </style>
 </head>
 <body>
