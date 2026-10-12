@@ -27,15 +27,25 @@ if [[ $LEARN_TEXT != 1 ]]; then
   nt_need ip tcpdump || exit 1
   current=$(cat "$NT_STATE" 2>/dev/null || true)
   if [[ -z $current ]]; then
-    echo "lab is down. bring up '$topo' now? [y/N] "
-    read -r k || exit 0
-    [[ $k =~ ^[yY]$ ]] || { echo "aborting"; exit 0; }
-    "$here/up.sh" "$topo" --force || exit 1
+    if [[ ${WIZARD_YES:-0} == 1 || ! -t 0 ]]; then
+      echo "lab is down. bringing up '$topo'..."
+      "$here/up.sh" "$topo" --force || exit 1
+    else
+      echo "lab is down. bring up '$topo' now? [y/N] "
+      read -r k || { echo "aborting"; exit 0; }
+      [[ $k =~ ^[yY]$ ]] || { echo "aborting"; exit 0; }
+      "$here/up.sh" "$topo" --force || exit 1
+    fi
   elif [[ $current != "$topo" ]]; then
-    echo "topology '$current' is up, this tour wants '$topo'. switch now? [y/N] "
-    read -r k || exit 0
-    [[ $k =~ ^[yY]$ ]] || { echo "aborting"; exit 0; }
-    "$here/up.sh" "$topo" --force || exit 1
+    if [[ ${WIZARD_YES:-0} == 1 || ! -t 0 ]]; then
+      echo "topology '$current' is up, switching to '$topo'..."
+      "$here/up.sh" "$topo" --force || exit 1
+    else
+      echo "topology '$current' is up, this tour wants '$topo'. switch now? [y/N] "
+      read -r k || { echo "aborting"; exit 0; }
+      [[ $k =~ ^[yY]$ ]] || { echo "aborting"; exit 0; }
+      "$here/up.sh" "$topo" --force || exit 1
+    fi
   fi
 fi
 
