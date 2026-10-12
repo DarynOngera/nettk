@@ -28,7 +28,7 @@ root=$(cd "$LEARN_DIR/../.." && pwd)
 # shellcheck source=./lab/lib.sh
 source "$root/lab/lib.sh"
 
-LEARN_LOG="${LEARN_LOG:-/tmp/nt-wizard.log}"
+LEARN_LOG="${LEARN_LOG:-$(mktemp /tmp/nt-wizard.XXXXXX.log)}"
 LEARN_TEXT=${LEARN_TEXT:-0}
 STEP_N=0
 QUIZ_OK=0
@@ -45,9 +45,13 @@ say() { printf '%s\n' "$*"; }
 
 pause() {
   if [[ $LEARN_TEXT == 1 || ${WIZARD_YES:-0} == 1 ]]; then return 0; fi
+  if [[ ! -t 0 ]]; then return 0; fi
   printf '  [Enter] continue, [q] quit > '
   local k
-  read -r k || { printf '\n'; exit 0; }
+  if ! read -r k; then
+    printf '\n'
+    return 0  # EOF -> continue
+  fi
   if [[ $k == q || $k == Q ]]; then say "wizard stopped. transcript kept in $LEARN_LOG"; exit 0; fi
 }
 
