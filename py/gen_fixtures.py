@@ -141,9 +141,11 @@ def arp_flood(n=20000):
 
 
 def dns_good():
-    """Phase-5 DNS messages exercising the name codec: compression pointers,
-    label+pointer, pointer-to-owner-start, escaped label bytes. Built as raw
-    payloads so the wire bytes are exactly ours (scapy would re-serialize)."""
+    """Phase-5 DNS messages exercising the codec: compression pointers,
+    label+pointer, pointer-to-owner-start, escaped label bytes, EDNS OPT,
+    NODATA/NXDOMAIN (SOA in authority), MX/TXT/AAAA, a referral with glue and
+    a CNAME+A chain. Built as raw payloads so the wire bytes are exactly ours
+    (scapy would re-serialize). Frames 1-5 are the M10 name-codec vectors."""
     hdr = lambda ident, flags, qd, an: bytes.fromhex(
         "%04x%04x%04x%04x00000000" % (ident, flags, qd, an))
     q_www = bytes.fromhex("03777777076578616d706c6503636f6d00") + b"\x00\x01\x00\x01"
@@ -159,13 +161,83 @@ def dns_good():
         hdr(0x1236, 0x0100, 1, 0) + q_x01y,     # label contains 0x01
         hdr(0x1237, 0x0100, 1, 0) + q_zffz,     # label contains 0xff
     ]
+
+    A, NS, CNAME, SOA, MX, TXT, AAAA, OPT = 1, 2, 5, 6, 15, 16, 28, 41
+    soa = (dn_name("ns.example.com") + dn_name("hostmaster.example.com") +
+           struct.pack(">IIIII", 2024010101, 3600, 600, 604800, 300))
+    payloads += [
+        # EDNS query with an OPT (dig sets RD + AD and adds EDNS by default)
+        dn_hdr(0x1240, 0x0120, 1, 0, 0, 1) + dn_q("www.example.com", A) +
+        b"\x00" + struct.pack(">HHIH", OPT, 4096, 0, 0),
+        # NODATA: NOERROR, empty answer, SOA in authority
+        dn_hdr(0x1241, 0x8580, 1, 0, 1) + dn_q("host.example.com", MX) +
+        dn_rr("example.com", SOA, 900, soa),
+        # NXDOMAIN with a negative SOA
+        dn_hdr(0x1242, 0x8583, 1, 0, 1) + dn_q("nope.example.com", A) +
+        dn_rr("example.com", SOA, 900, soa),
+        # MX answer
+        dn_hdr(0x1243, 0x8180, 1, 1) + dn_q("example.com", MX) +
+        dn_rr("example.com", MX, 300, struct.pack(">H", 10) + dn_name("mail.example.com")),
+        # TXT answer
+        dn_hdr(0x1244, 0x8180, 1, 1) + dn_q("example.com", TXT) +
+        dn_rr("example.com", TXT, 60, bytes([13]) + b"hello dns lab"),
+        # AAAA answer
+        dn_hdr(0x1245, 0x8180, 1, 1) + dn_q("example.com", AAAA) +
+        dn_rr("example.com", AAAA, 300,
+              bytes.fromhex("26062800022000010248189325c81946")),
+        # referral: NS in authority + glue A in additional
+        dn_hdr(0x1246, 0x8000, 1, 0, 1, 1) + dn_q("www.example.test", A) +
+        dn_rr("example.test", NS, 3600, dn_name("ns.example.test")) +
+        dn_rr("ns.example.test", A, 3600, bytes([10, 0, 5, 3])),
+        # CNAME + A chain
+        dn_hdr(0x1247, 0x8180, 1, 2) + dn_q("alias.example.com", A) +
+        dn_rr("alias.example.com", CNAME, 300, dn_name("www.example.com")) +
+        dn_rr("www.example.com", A, 300, bytes([1, 2, 3, 4])),
+    ]
     return [stamp([Ether(src=H1, dst=RT) / IP(src=IP1, dst="10.0.2.53", id=80 + i) /
                    UDP(sport=40000 + i, dport=53) / Raw(p)])[0]
             for i, p in enumerate(payloads)]
 
 
+def dns_tcp():
+    """DNS-over-TCP (RFC 1035 section 4.2.2): one full message and one segment
+    whose 2-byte length prefix claims more than the segment holds."""
+    full = dn_hdr(0x1248, 0x0100, 1, 0) + dn_q("www.example.com", 1)
+    partial = struct.pack(">H", 100) + bytes(range(20))
+    return stamp([
+        Ether(src=H1, dst=RT) / IP(src=IP1, dst="10.0.2.53") /
+        TCP(sport=40001, dport=53, flags="PA", seq=1) /
+        Raw(struct.pack(">H", len(full)) + full),
+        Ether(src=RT, dst=H1) / IP(src="10.0.2.53", dst=IP1) /
+        TCP(sport=53, dport=40001, flags="PA", seq=1) / Raw(partial),
+    ])
+
+
+def dn_name(name):
+    """Uncompressed wire name from dotted presentation form (lab fixtures)."""
+    if name == "":
+        return b"\x00"
+    out = b""
+    for lab in name.split("."):
+        b = lab.encode("latin-1")
+        out += bytes([len(b)]) + b
+    return out + b"\x00"
+
+
+def dn_hdr(ident, flags, qd=1, an=0, ns=0, ar=0):
+    return struct.pack(">HHHHHH", ident, flags, qd, an, ns, ar)
+
+
+def dn_q(name, qtype=1, qclass=1):
+    return dn_name(name) + struct.pack(">HH", qtype, qclass)
+
+
+def dn_rr(name, rtype, ttl, rdata, rclass=1):
+    return dn_name(name) + struct.pack(">HHIH", rtype, rclass, ttl, len(rdata)) + rdata
+
+
 def dns_malformed():
-    """Hostile DNS messages: the name codec must reject all of these cleanly."""
+    """Hostile DNS messages: the codec must reject all of these cleanly."""
     hdr12 = bytes.fromhex("1234010000010000" + "0000" + "0000")
     frames = []
     def pkt(payload):
@@ -177,12 +249,21 @@ def dns_malformed():
     pkt(hdr12 + b"\xc0\x0c" + b"\x00\x01\x00\x01")
     # forward pointer: target 14 is its own offset
     pkt(hdr12 + b"\x01a\xc0\x0e" + b"\x00\x01\x00\x01")
-    # 130-pointer chain: every hop strictly decreases, but exceeds the hop cap
-    ptrs = []
-    for i in range(130):
-        target = 0 if i == 0 else 3 + 2 * (i - 1)
-        ptrs.append(bytes([0xc0 | (target >> 8), target & 0xff]))
-    pkt(hdr12 + b"\x01a\x00" + b"".join(ptrs))
+    # 200-hop pointer chain reached through the second answer's owner: every
+    # hop points strictly backwards, so only the 128-hop cap stops it. The
+    # chain hides in the first answer's opaque RDATA (type 99 is not decoded).
+    h = dn_hdr(0x1300, 0x8180, 1, 2) + dn_q("a.test")
+    a1_owner = dn_name("a.test")
+    rdata_off = len(h) + len(a1_owner) + 10
+    hops = 200
+    chain = b""
+    for i in range(hops):
+        tgt = 12 if i == 0 else rdata_off + 2 * (i - 1)
+        chain += bytes([0xc0 | (tgt >> 8), tgt & 0xff])
+    entry = rdata_off + 2 * (hops - 1)
+    a1 = a1_owner + struct.pack(">HHIH", 99, 1, 60, len(chain)) + chain
+    a2 = bytes([0xc0 | (entry >> 8), entry & 0xff]) + struct.pack(">HHIH", 99, 1, 60, 0)
+    pkt(h + a1 + a2)
     # expanded name longer than 255 wire octets (5 x 52-byte labels)
     big = b"".join(bytes([52]) + bytes([0x61 + i]) * 52 for i in range(5)) + b"\x00"
     pkt(hdr12 + big)
@@ -190,7 +271,28 @@ def dns_malformed():
     pkt(hdr12 + bytes.fromhex("03777777076578616d70"))
     # pointer octet cut off (needs 2 bytes, has 1) after a complete qname
     pkt(hdr12 + bytes.fromhex("0361626300") + b"\xc0")
+    # two questions -> UNSUPPORTED
+    pkt(dn_hdr(0x1301, 0x0100, 2, 0) + dn_q("a.test") + dn_q("b.test"))
+    # A with RDLENGTH 3 -> MALFORMED
+    pkt(dn_hdr(0x1302, 0x8180, 1, 1) + dn_q("a.test") + dn_rr("a.test", 1, 60, b"\x01\x02\x03"))
+    # TXT char-string overruns RDATA -> MALFORMED
+    pkt(dn_hdr(0x1303, 0x8180, 1, 1) + dn_q("a.test", 16) +
+        dn_rr("a.test", 16, 60, bytes([9]) + b"abc"))
+    # two OPT records -> MALFORMED
+    pkt(dn_hdr(0x1304, 0x0100, 1, 0, 0, 2) + dn_q("a.test") +
+        b"\x00" + struct.pack(">HHIH", 41, 512, 0, 0) +
+        b"\x00" + struct.pack(">HHIH", 41, 512, 0, 0))
+    # OPT with a non-root owner -> MALFORMED
+    pkt(dn_hdr(0x1305, 0x0100, 1, 0, 0, 1) + dn_q("a.test") + dn_rr("not.root", 41, 0, b""))
+    # RDLENGTH 500 with only 4 bytes present -> TRUNCATED
+    pkt(dn_hdr(0x1306, 0x8180, 1, 1) + dn_q("a.test") + dn_name("a.test") +
+        struct.pack(">HHIH", 1, 1, 60, 500) + b"\x01\x02\x03\x04")
+    # ANCOUNT 20 but no records follow -> TRUNCATED
+    pkt(dn_hdr(0x1307, 0x8180, 1, 20) + dn_q("a.test"))
+    # truncated header (11 bytes) -> TRUNCATED
+    pkt(bytes.fromhex("12340100000100000000"))
     return frames
+
 
 
 def write_raw_pcap(path, frames):
@@ -212,7 +314,8 @@ def main():
     wrpcap(str(out / "arp-flood.pcap"), arp_flood())
     wrpcap(str(out / "dns-good.pcap"), dns_good())
     write_raw_pcap(out / "dns-malformed.pcap", dns_malformed())
-    print("wrote dns-good.pcap, dns-malformed.pcap")
+    wrpcap(str(out / "dns-tcp.pcap"), dns_tcp())
+    print("wrote dns-good.pcap, dns-malformed.pcap, dns-tcp.pcap")
     print(f"wrote {out}/basic.pcap, ipv6.pcap, malformed.pcap, arp-spoof.pcap, arp-flood.pcap")
 
 

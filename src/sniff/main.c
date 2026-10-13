@@ -9,6 +9,7 @@
  * --tsv columns and order match scripts/tshark-fields.sh exactly.
  */
 #include "nettk.h"
+#include "dns.h"
 #include "live.h"
 #include "pcap.h"
 #include "tcp_trace.h"
@@ -32,13 +33,14 @@ static void on_signal(int sig)
 static void usage(FILE *f, const char *prog)
 {
     fprintf(f,
-            "usage: %s (-r <file> | -i <if>) [-w <out>] [--tsv] [-x] [--tcp-trace] [-c N]\n"
+            "usage: %s (-r <file> | -i <if>) [-w <out>] [--tsv] [-x] [--tcp-trace] [--dns] [-c N]\n"
             "  -r <file>   read a classic pcap file\n"
             "  -i <if>     live AF_PACKET capture\n"
             "  -w <out>    write classic pcap (Ethernet)\n"
             "  -c <N>      stop after N packets\n"
             "  --tsv       TSV output matching scripts/tshark-fields.sh\n"
             "  --tcp-trace one line per TCP segment: flags, relative seq/ack, win, opts\n"
+            "  --dns       decoded DNS messages on UDP/TCP port 53 (no TCP reassembly)\n"
             "  -x          hex dump with field-offset annotations\n",
             prog);
 }
@@ -263,6 +265,89 @@ static nt_flow *flow_get(int fam, const uint8_t src[16], const uint8_t dst[16],
     return f;
 }
 
+/*
+ * --dns: decode DNS carried on UDP or TCP port 53. There is no TCP
+ * reassembly in this phase: a segment that does not hold the full message
+ * (2-byte length prefix + body) is reported as partial.
+ */
+static void print_dns(const nt_packet *p, unsigned long long num)
+{
+    const uint8_t *msg = NULL;
+    size_t msglen = 0;
+    int tcp = 0;
+    unsigned sport, dport;
+    char sb[46], db[46];
+
+    if (p->has_udp && (p->udp.sport == 53 || p->udp.dport == 53)) {
+        msg = p->udp.payload.data;
+        msglen = p->udp.payload.len;
+        sport = p->udp.sport;
+        dport = p->udp.dport;
+    } else if (p->has_tcp && (p->tcp.sport == 53 || p->tcp.dport == 53)) {
+        tcp = 1;
+        sport = p->tcp.sport;
+        dport = p->tcp.dport;
+        if (p->tcp.payload.len >= 2) {
+            size_t mlen = ((size_t)p->tcp.payload.data[0] << 8) | p->tcp.payload.data[1];
+            if (p->tcp.payload.len - 2 >= mlen) {
+                msg = p->tcp.payload.data + 2;
+                msglen = mlen;
+            }
+        }
+    } else {
+        return;
+    }
+
+    if (p->has_ipv4) {
+        fmt_v4(sb, p->ip4.src);
+        fmt_v4(db, p->ip4.dst);
+    } else {
+        fmt_v6(sb, p->ip6.src);
+        fmt_v6(db, p->ip6.dst);
+    }
+
+    if (msg == NULL) {
+        printf("#%llu %s %s:%u -> %s:%u DNS status=partial\n", num,
+               tcp ? "TCP" : "UDP", sb, sport, db, dport);
+        return;
+    }
+
+    nt_dns_msg m;
+    nt_status s = nt_dns_msg_decode(msg, msglen, &m);
+    if (s != NT_OK) {
+        printf("#%llu %s %s:%u -> %s:%u DNS status=%s\n", num,
+               tcp ? "TCP" : "UDP", sb, sport, db, dport, nt_status_str(s));
+        return;
+    }
+
+    printf("#%llu %s %s:%u -> %s:%u DNS id=0x%04x flags=0x%04x qr=%u opcode=%u "
+           "aa=%u tc=%u rd=%u ra=%u z=%u ad=%u cd=%u rcode=%u qd=%u an=%u ns=%u ar=%u\n",
+           num, tcp ? "TCP" : "UDP", sb, sport, db, dport,
+           m.id, m.flags, m.qr, m.opcode, m.aa, m.tc, m.rd, m.ra, m.z, m.ad, m.cd,
+           m.full_rcode, m.qd, m.an, m.ns, m.ar);
+
+    for (unsigned i = 0; i < m.qd; i++) {
+        printf("  q: %s %s %u\n", m.q[i].qname, nt_dns_type_str(m.q[i].qtype),
+               m.q[i].qclass);
+    }
+
+    static const char *const names[3] = { "an", "ns", "ar" };
+    const nt_dns_rr *arr[3] = { m.an_rr, m.ns_rr, m.ar_rr };
+    unsigned cnt[3] = { m.an, m.ns, m.ar };
+    for (int sec = 0; sec < 3; sec++) {
+        for (unsigned i = 0; i < cnt[sec]; i++) {
+            char own[NT_DNS_NAME_STR_MAX], rd[2048];
+            size_t end;
+            if (nt_dns_name_parse(m.buf, m.len, arr[sec][i].name_off, own, sizeof own, &end) != NT_OK)
+                snprintf(own, sizeof own, "?");
+            if (nt_dns_rdata_str(&m, &arr[sec][i], rd, sizeof rd) != NT_OK)
+                snprintf(rd, sizeof rd, "?");
+            printf("  %s[%u]: %s %s %u %s\n", names[sec], i, own,
+                   nt_dns_type_str(arr[sec][i].type), arr[sec][i].ttl, rd);
+        }
+    }
+}
+
 static void print_trace(const nt_packet *p, unsigned long long num)
 {
     if (!p->has_tcp) {
@@ -326,9 +411,11 @@ static void print_trace(const nt_packet *p, unsigned long long num)
 
 static void emit(const nt_packet *pkt, const uint8_t *buf, size_t caplen,
                  unsigned long long num, size_t origlen, int tsv, int hex,
-                 int trace)
+                 int trace, int dns)
 {
-    if (trace) {
+    if (dns) {
+        print_dns(pkt, num);
+    } else if (trace) {
         print_trace(pkt, num);
     } else if (tsv) {
         print_tsv(pkt, num, origlen);
@@ -347,6 +434,7 @@ int main(int argc, char **argv)
     int tsv = 0;
     int hex = 0;
     int trace = 0;
+    int dns = 0;
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-r") == 0 && i + 1 < argc) {
@@ -361,6 +449,8 @@ int main(int argc, char **argv)
             tsv = 1;
         } else if (strcmp(argv[i], "--tcp-trace") == 0) {
             trace = 1;
+        } else if (strcmp(argv[i], "--dns") == 0) {
+            dns = 1;
         } else if (strcmp(argv[i], "-x") == 0) {
             hex = 1;
         } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
@@ -420,7 +510,7 @@ int main(int argc, char **argv)
             nt_packet pkt;
             nt_status s = nt_decode_frame(buf, caplen, &pkt);
             stats[(unsigned)s < 4u ? (unsigned)s : 0u]++;
-            emit(&pkt, buf, caplen, num, origlen, tsv, hex, trace);
+            emit(&pkt, buf, caplen, num, origlen, tsv, hex, trace, dns);
             emitted++;
             if (count > 0 && emitted >= count) {
                 break;
@@ -474,7 +564,7 @@ int main(int argc, char **argv)
             nt_packet pkt;
             nt_status s = nt_decode_frame(buf, caplen, &pkt);
             stats[(unsigned)s < 4u ? (unsigned)s : 0u]++;
-            emit(&pkt, buf, caplen, num, caplen, tsv, hex, trace);
+            emit(&pkt, buf, caplen, num, caplen, tsv, hex, trace, dns);
             emitted++;
             if (count > 0 && emitted >= count) {
                 break;
