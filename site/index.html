@@ -183,7 +183,7 @@ sudo lab/ex &lt;host&gt; &lt;command...&gt;                      run inside nt-&
   <p class="cmd">arp -i &lt;iface&gt; [--probe] [-c tries] [-W timeout_ms] &lt;ipv4&gt;</p>
   <p class="cmd">arp scan -i &lt;iface&gt; [--rate pps] &lt;cidr&gt;   (at most a /24)</p>
   <ul>
-    <li>Insists on RFC 826 consistency (Ethernet src == ARP sender hardware; sender protocol
+    <li>Insists on <a href="https://www.rfc-editor.org/rfc/rfc826.html">RFC 826</a> consistency (Ethernet src == ARP sender hardware; sender protocol
     address == the address asked for; target == your address). A lying reply is dropped, and
     an offer like <code>--probe</code> (sender 0.0.0.0) resolves without polluting the
     target's neighbour cache.</li>
@@ -195,7 +195,7 @@ sudo lab/ex &lt;host&gt; &lt;command...&gt;                      run inside nt-&
   <p class="cmd">ndp -i &lt;iface&gt; [-c tries] [-W timeout_ms] &lt;ipv6&gt;</p>
   <ul>
     <li>Sends an ICMPv6 Neighbor Solicitation and accepts only an honest Neighbor
-    Advertisement per RFC 4861 §7.1.1: hop limit 255, matching target, valid checksum.</li>
+    Advertisement per <a href="https://www.rfc-editor.org/rfc/rfc4861.html">RFC 4861</a> §7.1.1: hop limit 255, matching target, valid checksum.</li>
   </ul>
 
   <h3>arpmon — ARP attack monitor</h3>
@@ -249,8 +249,8 @@ sudo lab/ex &lt;host&gt; &lt;command...&gt;                      run inside nt-&
     by default; <code>--iter</code> walks root → TLD → authoritative, requiring in-bailiwick glue for
     each referral, with bounded CNAME chains (8), referral depth (16) and a 10&nbsp;s overall deadline.</li>
     <li>EDNS0 advertises 1232 bytes (a MTU-safe default that avoids fragmentation); a TC=1 answer
-    falls back to TCP with the RFC 7766 two-octet length prefix. <code>--weak</code> fixes the id
-    and source port to demonstrate the off-path spoofing lesson (RFC 5452).</li>
+    falls back to TCP with the <a href="https://www.rfc-editor.org/rfc/rfc7766.html">RFC 7766</a> two-octet length prefix. <code>--weak</code> fixes the id
+    and source port to demonstrate the off-path spoofing lesson (<a href="https://www.rfc-editor.org/rfc/rfc5452.html">RFC 5452</a>).</li>
     <li>Every response is validated before use: matching id, QR=1, question echoed, and a source
     address that is the server you asked.</li>
   </ul>
@@ -322,7 +322,7 @@ sudo lab/ex &lt;host&gt; &lt;command...&gt;                      run inside nt-&
   <h2>WIRE LAYOUTS</h2>
   <p>Offsets are bytes from the start of the frame (Ethernet) or header.</p>
 
-  <h3>Ethernet <span class="tag">(RFC 894)</span></h3>
+  <h3>Ethernet <span class="tag">(<a href="https://www.rfc-editor.org/rfc/rfc894.html">RFC 894</a>)</span></h3>
   <table>
     <tr><th>Offset</th><th class="right">Size</th><th>Field</th><th>Notes</th></tr>
     <tr><td>0</td><td class="right">6</td><td>dst MAC</td><td><code>ff:ff:ff:ff:ff:ff</code> = broadcast</td></tr>
@@ -330,7 +330,7 @@ sudo lab/ex &lt;host&gt; &lt;command...&gt;                      run inside nt-&
     <tr><td>12</td><td class="right">2</td><td>EtherType</td><td><code>0x0806</code> ARP, <code>0x0800</code> IPv4, <code>0x86dd</code> IPv6, <code>0x8100</code> 802.1Q</td></tr>
   </table>
 
-  <h3>IPv4 <span class="tag">(RFC 791 §3.1)</span></h3>
+  <h3>IPv4 <span class="tag">(<a href="https://www.rfc-editor.org/rfc/rfc791.html">RFC 791</a> §3.1)</span></h3>
   <table>
     <tr><th>Offset</th><th class="right">Size</th><th>Field</th><th>Notes</th></tr>
     <tr><td>0</td><td class="right">1</td><td>ver/IHL</td><td>IHL in 32-bit words; minimum 5, validated</td></tr>
@@ -340,27 +340,27 @@ sudo lab/ex &lt;host&gt; &lt;command...&gt;                      run inside nt-&
     <tr><td>6</td><td class="right">2</td><td>flags/fragment offset</td><td>bit 2 = DF</td></tr>
     <tr><td>8</td><td class="right">1</td><td>TTL</td><td>decremented once per routed hop</td></tr>
     <tr><td>9</td><td class="right">1</td><td>protocol</td><td><code>1</code> ICMP, <code>6</code> TCP, <code>17</code> UDP</td></tr>
-    <tr><td>10</td><td class="right">2</td><td>checksum</td><td>header-only, RFC 1071 complement-sum</td></tr>
+    <tr><td>10</td><td class="right">2</td><td>checksum</td><td>header-only, <a href="https://www.rfc-editor.org/rfc/rfc1071.html">RFC 1071</a> complement-sum</td></tr>
     <tr><td>12</td><td class="right">4</td><td>src / dst address</td><td></td></tr>
   </table>
 
-  <h3>TCP/UDP <span class="tag">(RFC 793 / RFC 768)</span></h3>
+  <h3>TCP/UDP <span class="tag">(<a href="https://www.rfc-editor.org/rfc/rfc9293.html">RFC 9293</a> / <a href="https://www.rfc-editor.org/rfc/rfc768.html">RFC 768</a>)</span></h3>
   <table>
     <tr><th>Offset</th><th class="right">Size</th><th>Field</th><th>Notes</th></tr>
     <tr><td>0</td><td class="right">2</td><td>sport / dport</td><td>UDP: length at offset 4, checksum covers the pseudo-header (src+dst IP, protocol, length)</td></tr>
     <tr><td>12</td><td class="right">1</td><td>data offset (TCP)</td><td>×4 = header length in bytes; read before any payload</td></tr>
   </table>
 
-  <h3>ICMP/ICMPv6 <span class="tag">(RFC 792 / RFC 4443)</span></h3>
+  <h3>ICMP/ICMPv6 <span class="tag">(<a href="https://www.rfc-editor.org/rfc/rfc792.html">RFC 792</a> / <a href="https://www.rfc-editor.org/rfc/rfc4443.html">RFC 4443</a>)</span></h3>
   <table>
     <tr><th>Type | code</th><th>Meaning</th></tr>
     <tr><td>3/0–5</td><td>destination unreachable: net, host, port, frag-needed (+mtu), source-route</td></tr>
     <tr><td>8/0 · 0/0</td><td>echo request · reply</td></tr>
     <tr><td>11/0,1</td><td>time exceeded: TTL expired</td></tr>
-    <tr><td>135/136</td><td>IPv6 Neighbor Solicitation / Advertisement (NDP, RFC 4861)</td></tr>
+    <tr><td>135/136</td><td>IPv6 Neighbor Solicitation / Advertisement (NDP, <a href="https://www.rfc-editor.org/rfc/rfc4861.html">RFC 4861</a>)</td></tr>
   </table>
 
-  <h3>ARP <span class="tag">(RFC 826)</span></h3>
+  <h3>ARP <span class="tag">(<a href="https://www.rfc-editor.org/rfc/rfc826.html">RFC 826</a>)</span></h3>
   <table>
     <tr><th>Offset</th><th class="right">Size</th><th>Field</th><th>Notes</th></tr>
     <tr><td>14</td><td class="right">2</td><td>htype / ptype</td><td>1 = Ethernet, 0x0800 = IPv4</td></tr>
@@ -368,7 +368,7 @@ sudo lab/ex &lt;host&gt; &lt;command...&gt;                      run inside nt-&
     <tr><td>22</td><td class="right">6</td><td>sender hardware / protocol addr</td><td>the fields an attacker must lie about</td></tr>
   </table>
 
-  <h3>DNS message <span class="tag">(RFC 1035 §4)</span></h3>
+  <h3>DNS message <span class="tag">(<a href="https://www.rfc-editor.org/rfc/rfc1035.html">RFC 1035</a> §4)</span></h3>
   <table>
     <tr><th>Offset</th><th class="right">Size</th><th>Field</th><th>Notes</th></tr>
     <tr><td>0</td><td class="right">2</td><td>ID</td><td>matched before the answer is believed</td></tr>
@@ -376,11 +376,11 @@ sudo lab/ex &lt;host&gt; &lt;command...&gt;                      run inside nt-&
     <tr><td>4</td><td class="right">2</td><td>QDCOUNT…ARCOUNT</td><td>four 16-bit section counts, validated against the length</td></tr>
     <tr><td>12</td><td class="right">var</td><td>question / RRs</td><td>name (labels, 63 max, compression <code>0xC0</code> pointer — jump count bounded), then type/class</td></tr>
   </table>
-  <p>Names are parsed to presentation form with RFC 1035 §5.1 escaping (<code>\.</code>, <code>\DDD</code>);
+  <p>Names are parsed to presentation form with <a href="https://www.rfc-editor.org/rfc/rfc1035.html">RFC 1035</a> §5.1 escaping (<code>\.</code>, <code>\DDD</code>);
   <code>sniff --dns</code> prints them that way and <code>dnsq</code> compares answers after the same
   normalisation.</p>
 
-  <h3>BOOTP/DHCP <span class="tag">(RFC 2131 §2)</span></h3>
+  <h3>BOOTP/DHCP <span class="tag">(<a href="https://www.rfc-editor.org/rfc/rfc2131.html">RFC 2131</a> §2)</span></h3>
   <table>
     <tr><th>Offset</th><th class="right">Size</th><th>Field</th><th>Notes</th></tr>
     <tr><td>0</td><td class="right">1</td><td>op</td><td>1 BOOTREQUEST, 2 BOOTREPLY</td></tr>
@@ -391,7 +391,7 @@ sudo lab/ex &lt;host&gt; &lt;command...&gt;                      run inside nt-&
     <tr><td>28</td><td class="right">16</td><td>chaddr</td><td>client hardware address</td></tr>
     <tr><td>44–235</td><td class="right">192</td><td>sname / file</td><td>reused as options only under option 52 (out of scope)</td></tr>
     <tr><td>236</td><td class="right">4</td><td>magic cookie</td><td><code>63 82 53 63</code></td></tr>
-    <tr><td>240</td><td class="right">var</td><td>options</td><td>TLV; code 0 PAD, 255 END; a repeated option is rejected (no RFC 3396 concatenation)</td></tr>
+    <tr><td>240</td><td class="right">var</td><td>options</td><td>TLV; code 0 PAD, 255 END; a repeated option is rejected (no <a href="https://www.rfc-editor.org/rfc/rfc3396.html">RFC 3396</a> concatenation)</td></tr>
   </table>
 </section>
 
@@ -515,13 +515,24 @@ scripts/            tshark/arping/nmap oracle comparisons</pre>
 
 <section id="see-also">
   <h2>SEE ALSO</h2>
-  <p><code>README.md</code>, <code>usage.md</code> (working order + acceptance criteria),
-  <code>docs/phase1.md</code>, <code>docs/phase2-3.md</code>, <code>docs/phase4.md</code>,
-  <code>docs/phase5.md</code>, <code>docs/phase6.md</code>,
-  <code>docs/phase4-6-prompt.md</code>;</p>
-  <p>RFC 791, RFC 792, RFC 826, RFC 894, RFC 2460, RFC 4443, RFC 4861, RFC 9293 (TCP), RFC 768 (UDP),
-  RFC 1035 &amp; RFC 5452 (DNS), RFC 2131 &amp; RFC 2132 (DHCP);
-  <code>tcpdump(8)</code>, <code>tshark(1)</code>, <code>ip(8)</code>, <code>ss(8)</code>,
+  <p>Protocol references:
+  <a href="https://www.rfc-editor.org/rfc/rfc894.html">RFC 894</a> (Ethernet),
+  <a href="https://www.rfc-editor.org/rfc/rfc826.html">RFC 826</a> (ARP),
+  <a href="https://www.rfc-editor.org/rfc/rfc791.html">RFC 791</a> and
+  <a href="https://www.rfc-editor.org/rfc/rfc1071.html">RFC 1071</a> (IPv4, checksum),
+  <a href="https://www.rfc-editor.org/rfc/rfc792.html">RFC 792</a> (ICMP),
+  <a href="https://www.rfc-editor.org/rfc/rfc8200.html">RFC 8200</a> and
+  <a href="https://www.rfc-editor.org/rfc/rfc4443.html">RFC 4443</a> (IPv6, ICMPv6),
+  <a href="https://www.rfc-editor.org/rfc/rfc4861.html">RFC 4861</a> (NDP),
+  <a href="https://www.rfc-editor.org/rfc/rfc9293.html">RFC 9293</a> and
+  <a href="https://www.rfc-editor.org/rfc/rfc768.html">RFC 768</a> (TCP, UDP),
+  <a href="https://www.rfc-editor.org/rfc/rfc1035.html">RFC 1035</a>,
+  <a href="https://www.rfc-editor.org/rfc/rfc7766.html">RFC 7766</a> and
+  <a href="https://www.rfc-editor.org/rfc/rfc5452.html">RFC 5452</a> (DNS),
+  <a href="https://www.rfc-editor.org/rfc/rfc2131.html">RFC 2131</a>,
+  <a href="https://www.rfc-editor.org/rfc/rfc2132.html">RFC 2132</a> and
+  <a href="https://www.rfc-editor.org/rfc/rfc3396.html">RFC 3396</a> (DHCP);</p>
+  <p><code>tcpdump(8)</code>, <code>tshark(1)</code>, <code>ip(8)</code>, <code>ss(8)</code>,
   <code>nstat(8)</code>, <code>dig(1)</code>, <code>dnsmasq(8)</code>, <code>dhclient(8)</code>,
   <code>arptables(8)</code>, <code>nft(8)</code>.</p>
 </section>
