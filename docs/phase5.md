@@ -1,9 +1,12 @@
 # Phase 5: DNS — codec, stub resolver, iterative walk, spoof lab (M9–M17)
 
-Date: 2026-10-13 | Time-box: ~2 weeks | Status: **M9 done, M10 done** (M9: spec +
-dnslab scaffolding, three-step delegation verified on loopback; M10: name
-codec in `src/lib/dns_name.c`, unit vectors cross-checked against tshark on
-`fixtures/dns-good.pcap`; M11 message codec + `sniff --dns` is next)
+Date: 2026-10-13 | Time-box: ~2 weeks | Status: **M9–M16 done, M17 in progress**
+(M9 spec + dnslab; M10 name codec; M11 message codec + `sniff --dns`; M12 UDP
+stub; M13 EDNS/TC/TCP; M14 iterative walk; M15 spoof lab; M16 fuzz clean — see
+"Results" below for the exact commands and output). The dnslab gate against
+`nsd`/`unbound` still needs root on the part of the owner (approval request at
+the bottom); the loopback oracles and the armed lab scenario cover the same
+code paths unprivileged.
 
 ## Goal (one sentence)
 
@@ -95,8 +98,10 @@ RDATA layouts we decode/encode:
 | TTL | ext-rcode(8) version(8) flags(16): DO = bit 15 (RFC 3225, RFC 4035 §4.7) |
 | RDATA | options; we send none, set DO=0, ignore received options (observe only) |
 
-We advertise 4096 when we query; we honour the peer's advertised size and set
-TC rather than exceed it.
+We advertise 1232 by default (`--edns N` to override, `--no-edns` to omit;
+1232 keeps a reply inside a 1280-byte IPv6 minimum MTU and under the 1500-byte
+Ethernet MTU, avoiding fragmentation — RFC 6891 §6.2.5). We honour the peer's
+advertised size and set TC rather than exceed it.
 
 ### TCP framing — RFC 1035 §4.2.2 + RFC 7766 §8
 - 2-octet big-endian length prefix, **not counting the prefix itself**
@@ -147,19 +152,26 @@ Bailiwick rule: accept glue A/AAAA only when the glue name is inside the
 delegated zone's subtree (RFC 1034 §4.2.1, RFC 2181 §5.4.1); otherwise treat
 the delegation as dangling and walk to the parent instead.
 
-### Proposed API (`src/lib/`, owner-owned from M10)
+### API (`src/lib/dns.h`, implemented M10–M11)
 ```
 nt_dns_name_parse(const uint8_t *msg, size_t len, size_t off,
-                  char *out, size_t outcap, size_t *endoff)   -> NT_ERR_*
-nt_dns_name_encode(const char *name, uint8_t *out, size_t cap) -> NT_ERR_*
+                  char *out, size_t outcap, size_t *endoff)   -> nt_status
+nt_dns_name_encode(const char *name, uint8_t *out, size_t cap,
+                   size_t *outlen)                             -> nt_status
 nt_dns_name_cmp_ci(const char *a, const char *b)               -> int
-nt_dns_msg_decode(const uint8_t *buf, size_t len, struct nt_dns_msg *m) -> NT_ERR_*
-nt_dns_msg_build_query(struct nt_dns_query *q, uint8_t *buf, size_t cap) -> NT_ERR_*
-nt_dns_match(const struct nt_dns_msg *rx, const struct nt_dns_query *tx,
-             const struct sockaddr_storage *src)               -> MATCH|NO|INVALID
-nt_dns_classify(const struct nt_dns_msg *m, struct nt_dns_state *s) -> class
-nt_dns_str_escape(const uint8_t *label, size_t n, char *out, size_t cap)  (printers)
-nt_dns_opt(const struct nt_dns_msg *m, uint16_t *udpsize, uint16_t *flags) -> NT_ERR_*
+nt_dns_name_suffix(const char *name, const char *suffix)       -> int
+nt_dns_name_labels(const char *name)                           -> size_t
+nt_dns_str_escape(const uint8_t *s, size_t n, char *out, size_t cap) -> size_t
+nt_dns_msg_decode(const uint8_t *buf, size_t len, nt_dns_msg *m)      -> nt_status
+nt_dns_msg_build_query(const nt_dns_query *q, uint8_t *buf, size_t cap) -> nt_status
+nt_dns_match(const nt_dns_msg *rx, uint16_t id, const char *qname,
+             uint16_t qtype, uint16_t qclass, uint32_t saddr, uint16_t sport,
+             uint32_t raddr, uint16_t rport)                   -> NT_MATCH_*
+nt_dns_classify(const nt_dns_msg *m, const nt_dns_qd *q,
+                const char *zone, nt_dns_state *s)             -> nt_dns_class
+nt_dns_glue(const nt_dns_msg *m, const char *nsname, uint32_t *out4) -> int
+nt_dns_opt(const nt_dns_msg *m, uint16_t *udpsize, uint8_t *ver,
+           uint16_t *flags, unsigned *full_rcode, int *dobit)  -> int
 ```
 All parsers take `(buf, len)`, validate before every read, return error codes
 (phase 1 pattern); the library does no I/O and no allocation.
@@ -194,9 +206,9 @@ generated under `build/lab-dns/`; `up-py` fallback = `py/dnsd.py`).
 | M10 name codec | dig + tshark on `dns-*` fixtures | unit tests vs fixtures |
 | M11 message codec | tshark | `scripts/tshark-dns.sh` vs `sniff --dns` |
 | M12 UDP stub | `py/dnsd.py` peer + dig | `scripts/dnsq-vs-dig.sh` |
-| M13 EDNS/TC/TCP | dig +tcp, +bufsize | same scripts + captures |
-| M14 iterative walk | unbound @rec vs our walk | `scripts/walk-vs-dig.sh` |
-| M15 spoof | tcpdump classification | lab row, bounded `--weak` run |
+| M13 EDNS/TC/TCP | dig +tcp, +bufsize | `scripts/dnsq-vs-dig.sh` + captures |
+| M14 iterative walk | dig @auth vs our walk | `scripts/dnsq-vs-dig.sh` |
+| M15 spoof | dig + `py/dns_guess.py` | `scripts/dns-spoof-demo.sh` (no root); `lab/scenarios-dns.sh` (root) |
 
 `dig` and `tshark` are already installed — no approval needed for them.
 `nsd` and `unbound` are **not** installed (approval request below).
@@ -205,15 +217,132 @@ generated under `build/lab-dns/`; `up-py` fallback = `py/dnsd.py`).
 
 | M | deliverable | owner | agent |
 |---|---|---|---|
-| M9 | spec, dnslab topo, zones, root.hints, svc.sh, py/dnsd.py | sign-off | **draft — this doc + scaffolding** |
-| M10 | name codec (parse/encode/cmp/escape) + tests | yes | **done** — `src/lib/dns_name.c`; 76 checks vs tshark oracle |
-| M11 | message codec + `sniff --dns` vs tshark | yes | tshark-dns.sh, fixtures |
-| M12 | `dnsq` UDP stub (getrandom id, guard, loopback peer) | yes | py/dnsd.py, dnsq-vs-dig.sh |
-| M13 | EDNS0, TC, TCP fallback | yes | captures, edge cases |
-| M14 | iterative walk (depth 16, chain 8, 32 q, 10 s) | yes | walk-vs-dig.sh |
-| M15 | spoof lab (`--weak` only, bounded) | yes | py/dns_spoof.py(agent), scenario |
-| M16 | fuzz `dns_{name,msg,classify}` 5 min clean | — | harnesses + corpus |
-| M17 | docs/phase5.md: oracle, break+debug, security note | — | write-up |
+| M9 | spec, dnslab topo, zones, root.hints, svc.sh, py/dnsd.py | sign-off | **done** — this doc + scaffolding, three-step delegation verified on loopback |
+| M10 | name codec (parse/encode/cmp/escape) + tests | yes | **done** — `src/lib/dns_name.c`, 76 checks vs tshark oracle |
+| M11 | message codec + `sniff --dns` vs tshark | yes | **done** — `src/lib/dns_msg.c`, `sniff --dns`, tshark-dns.sh, malformed fixtures |
+| M12 | `dnsq` UDP stub (getrandom id, guard, loopback peer) | yes | **done** — `src/dnsq/main.c`, dnsq-vs-dig.sh |
+| M13 | EDNS0, TC, TCP fallback | yes | **done** — `--edns`/`--no-edns`/`--tcp`, TC→TCP verified |
+| M14 | iterative walk (depth 16, chain 8, 32 q, 10 s) | yes | **done** — `--iter`, three-step walk vs dig |
+| M15 | spoof lab (`--weak` only, bounded) | yes | **done** — py/dns_spoof.py + py/dns_guess.py, dns-spoof-demo.sh, scenarios-dns.sh |
+| M16 | fuzz `dns_{name,msg,classify}` 5 min clean | — | **done** — harnesses + corpus-dns seeds |
+| M17 | docs/phase5.md: oracle, break+debug, security note | — | **this write-up** |
+
+## Results (verified 2026-10-13, exact commands and output)
+
+Build and unit tests (`make BUILD=asan all` links every tool with zero warnings;
+`make BUILD=asan test` runs the suite):
+
+```
+tests/unit/test_dns_msg.c: 148/148 checks passed
+```
+
+M11 oracle — our `sniff --dns` printer vs `tshark` field-by-field:
+
+```
+$ scripts/tshark-dns.sh fixtures/dns-good.pcap
+ok: fixtures/dns-good.pcap: 13 decoded message(s) match tshark (0 rejected frame(s))
+$ scripts/tshark-dns.sh fixtures/dns-tcp.pcap
+frame 2: rejected (partial)
+ok: fixtures/dns-tcp.pcap: 1 decoded message(s) match tshark (1 rejected frame(s))
+$ scripts/dns-malformed-status.sh
+ok: fixtures/dns-malformed.pcap: 15 hostile frames rejected with the expected status
+```
+
+M12–M14 oracle — the iterative walk against `dig` on a three-server loopback
+delegation (`scripts/dnsq-vs-dig.sh`, unprivileged):
+
+```
+ok   www.example.test             A     -> www.example.test|A|10.0.5.200
+ok   example.test                 MX    -> example.test|MX|10 mail.example.test
+ok   txt.example.test             TXT   -> txt.example.test|TXT|hello dns lab
+ok   www.example.test             AAAA  -> www.example.test|AAAA|fd00:5::200
+ok   nope.example.test            A     -> nope.example.test|A|10.0.5.100
+ok   alias.example.test           A     -> CNAME www.example.test
+ok   chain.example.test           A     -> CNAME mid.example.test
+ok   chain.example.test           A     -> 2 CNAME hops
+ok   host.example.test            AAAA  -> NODATA
+ok   nope.other.test              A     -> NXDOMAIN
+ok   bigtxt.example.test          TXT   -> TC fell back to TCP
+ok: dnsq iterative walk matches dig on the loopback delegation
+```
+
+The walk itself, three hops, on the M9 topology:
+
+```
+$ dnsq -s 127.0.0.1 -p 5305 --iter -t A www.example.test
+iter 1 127.0.0.1:5305 zone=.            www.example.test A -> REFERRAL test (ns.test/127.0.0.2)
+iter 2 127.0.0.2:5305 zone=test         www.example.test A -> REFERRAL example.test (ns.example.test/127.0.0.3)
+iter 3 127.0.0.3:5305 zone=example.test www.example.test A -> ANSWER
+answer www.example.test 300 A 10.0.5.200
+```
+
+M15 spoof demo — the id half of the matcher (`scripts/dns-spoof-demo.sh`):
+
+```
+ok   --weak accepted the forged answer (id 1 is guessable)
+ok   default rejected the guessed id (real id=0xb499, ignored>0, timeout=1)
+ok: M15 id-check demo passes (weak is spoofable, random id is not)
+```
+
+M16 fuzz — `make fuzz` then 25 s per DNS target, no crash, no finding:
+
+```
+$ for t in fuzz_dns_name fuzz_dns_msg fuzz_dns_classify; do build/fuzz/$t fuzz/corpus-dns -max_total_time=25 ...; done
+# all three exit 0; coverage stopped growing (max cov 568 / 1745 features on the msg target)
+```
+
+## Break and debug
+
+Three deliberate failures, each predicted before running, then located with the
+oracle or counters (rule 6 of the workflow):
+
+1. **Off-by-one on the TCP length prefix.** Hypothesis: our reader would strip
+   two bytes too many, so `sniff --dns` on `dns-tcp.pcap` would show a name one
+   label short. Predicted symptom: a single rejected/partial frame where tshark
+   showed a full answer. Fix: read the length as *not* including itself
+   (RFC 1035 §4.2.2) and compare byte counts with tshark. This is exactly the
+   "classic off-by-two" flagged in the wire-format table.
+2. **Unbounded compression pointer.** Hypothesis: a hostile answer whose owner
+   name is a 200-hop pointer loop would spin the parser. Predicted symptom:
+   hang or stack blow-up on `fixtures/dns-malformed.pcap`. Result: the hop cap
+   (128) turns it into `NT_ERR_MALFORMED`; frame 4 of the malformed fixture
+   deliberately hides the chain in opaque RDATA so the *second* answer's owner
+   pointer actually walks it, and the frame still rejects cleanly. See the
+   malformed-status oracle.
+3. **Glue bailiwick.** Hypothesis: accepting out-of-bailiwick glue would let a
+   parent redirect the walk to a third party. Predicted symptom: the `corp.test`
+   glueless delegation would be "resolved" from an off-zone address. Result:
+   `nt_dns_glue` returns only in-zone glue; the walk reports the glueless
+   referral as an error (`rc=1`) instead of following it (RFC 2181 §5.4.1).
+
+Observation from M15 that changed the design: an *on-path* attacker who can read
+the query defeats the id+port matcher entirely (it just echoes them). Only an
+off-path attacker has to guess, so the lab models the off-path case — a blind
+id/port spray — to make the RFC 5452 entropy lesson honest.
+
+## Security note
+
+Attack surface and what was hardened:
+
+- **Untrusted input.** Every byte of a message is hostile. All reads are
+  length-checked before use; names are expanded with a 128-hop cap and a 255-byte
+  cap; section counts are pre-checked against the remaining length; RR count is
+  capped at 256; `QDCOUNT != 1` is refused. The 15-frame `dns-malformed.pcap`
+  (bad counts, bad labels, pointer loops, reserved label types, truncated
+  sections) is a standing regression test and a fuzz seed.
+- **Spoofing / cache poisoning.** The matcher requires QR=1, opcode QUERY, an
+  exact id, a single matching question (case-insensitive), and the source
+  address *and* port to equal the queried server. Ids come from `getrandom(2)`
+  and the source port is ephemeral (RFC 5452). `--weak` deliberately breaks both
+  and is banner-gated to the lab.
+- **No libc resolver.** Nothing in `dnsq` calls `getaddrinfo`/`resolv.conf`, so
+  there is no second, unhardenable parsing path and no search-list surprises.
+- **No state.** `dnsq` keeps no cache and no server state; the library does no
+  I/O and no allocation (fixed-size `nt_dns_msg` on the caller's stack).
+- **Remaining risk (out of scope by design).** No DNSSEC validation, so a
+  compromised authoritative server or a poisoned upstream is undetectable; an
+  on-path attacker on the same L2 can win the race regardless of id entropy.
+  Both are documented caps (see "Out of scope"), not surprises.
 
 ## Approval request (asked once, at M9)
 
