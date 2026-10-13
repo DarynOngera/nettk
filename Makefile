@@ -55,10 +55,10 @@ $(OUT)/bin/$(1): $$($(1)_OBJ) $$(COMMONDEP) $$(LIBDEP)
 endef
 $(foreach t,$(TOOLS),$(eval $(call TOOL_RULE,$(t))))
 
-.PHONY: all help clean test san-test fuzz fuzz-seeds fuzz-run fixtures golden deps \
+.PHONY: all help clean test san-test fuzz fuzz-seeds fuzz-seeds-dns fuzz-seeds-dhcp fuzz-run fixtures golden deps \
         lab-up lab-down lab-status lab-check lab-wizard phase0 \
         oracle-traceroute scenarios-traceroute scenarios-arp scenarios-ndp arpmon-check \
-        scenarios-spoof
+        scenarios-spoof scenarios-dns dns-oracle scenarios-dhcp dhcp-oracle
 
 all: $(BINS) ## build every tool (BUILD=asan|tsan|release)
 
@@ -101,11 +101,21 @@ fuzz: ## build libFuzzer targets (needs clang)
 fuzz-seeds: fixtures ## extract raw-packet fuzz seeds from fixtures/*.pcap
 > scripts/fuzz-seeds.sh fuzz/corpus
 
-fuzz-run: fuzz fuzz-seeds ## build and fuzz for 5 minutes
-> build/fuzz/fuzz_decode fuzz/corpus -max_total_time=300 -print_final_stats=1
+fuzz-seeds-dns: fixtures ## extract raw DNS payload seeds into fuzz/corpus-dns
+> scripts/fuzz-seeds-dns.sh fuzz/corpus-dns
+
+fuzz-seeds-dhcp: fixtures ## extract raw DHCP payload seeds into fuzz/corpus-dhcp
+> scripts/fuzz-seeds-dhcp.sh fuzz/corpus-dhcp
+
+fuzz-run: fuzz fuzz-seeds fuzz-seeds-dns fuzz-seeds-dhcp ## build and fuzz every target for 5 minutes
+> @for t in build/fuzz/fuzz_*; do \
+>   echo "== $$t"; \
+>   "$$t" fuzz/corpus fuzz/corpus-dns fuzz/corpus-dhcp -max_total_time=300 -print_final_stats=1 || exit 1; \
+> done
 
 fixtures: ## generate scapy test captures into fixtures/
 > python3 py/gen_fixtures.py fixtures
+> python3 py/gen_dhcp_fixtures.py fixtures
 
 golden: ## regenerate scapy golden vectors for the M1 builders
 > python3 py/gen_golden.py fixtures/golden
@@ -135,6 +145,21 @@ arpmon-check: ## M10 arpmon rules + bounded-memory fixture check
 > scripts/arpmon-check.sh
 scenarios-spoof: ## M11 ARP poison/restore/defence experiment (bridge3)
 > $(SUDO) lab/scenarios-spoof.sh
+scenarios-dns: ## M12-M15 dnsq walk + spoof lesson (dnslab)
+> $(SUDO) lab/scenarios-dns.sh
+dns-oracle: ## diff sniff --dns / dnsq against tshark and dig (no root)
+> scripts/tshark-dns.sh fixtures/dns-good.pcap
+> scripts/tshark-dns.sh fixtures/dns-tcp.pcap
+> scripts/dns-malformed-status.sh
+> scripts/dnsq-vs-dig.sh
+> scripts/dns-spoof-demo.sh
+scenarios-dhcp: ## M20-M22 DORA, broadcast flag, rogue server (dhcp1)
+> $(SUDO) lab/scenarios-dhcp.sh
+
+dhcp-oracle: ## diff sniff --dhcp against tshark and hostile-lease tests (no root)
+> scripts/tshark-dhcp.sh fixtures/dhcp-good.pcap
+> scripts/dhcp-malformed-status.sh
+> scripts/apply-lease-check.sh
 
 phase0: ## full Phase 0 acceptance: sanitizers, fixtures, lab up, lab checks
 > $(MAKE) san-test

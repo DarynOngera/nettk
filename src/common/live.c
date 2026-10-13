@@ -54,8 +54,9 @@ static int caps_are_minimal(void)
 }
 
 /* Drop from root to the invoking user while retaining CAP_NET_RAW only.
- * Under `sudo` the target is SUDO_UID/SUDO_GID; otherwise the real uid. */
-static int drop_privileges(void)
+ * Under `sudo` the target is SUDO_UID/SUDO_GID; otherwise the real uid.
+ * Shared with other raw-socket tools (dhcpc). */
+int nt_drop_privs(void)
 {
     if (geteuid() != 0)
         return 0;
@@ -144,7 +145,7 @@ int nt_live_open(nt_live *l, const char *iface)
     int rcvbuf = 4 * 1024 * 1024;
     (void)setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &rcvbuf, sizeof rcvbuf);
 
-    if (drop_privileges() != 0) {
+    if (nt_drop_privs() != 0) {
         fprintf(stderr, "nettk: privilege drop failed: %s\n", strerror(errno));
         close(fd);
         return -1;

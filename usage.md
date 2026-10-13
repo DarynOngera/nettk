@@ -201,6 +201,8 @@ sudo lab/scenarios-traceroute.sh     # !N / !X / !F (line4)
 sudo lab/scenarios-arp.sh            # hostile ARP responders (bridge3)
 sudo lab/scenarios-ndp.sh            # hostile Neighbor Advertisements (basic)
 sudo lab/scenarios-spoof.sh          # poison, arpmon alert, restore-on-exit (bridge3)
+sudo lab/scenarios-dns.sh            # iterative walk, TC->TCP, off-path spoof lesson (dnslab)
+sudo lab/scenarios-dhcp.sh           # DORA, broadcast flag, rogue server (dhcp1)
 ```
 
 ### The guided tour (wizard)
@@ -244,8 +246,31 @@ served at `darynongera.github.io/nettk`.
 `NT_OFFLOAD`, `NT_IPV6`, `NT_PREFIX`, `BUILD` — see the table in `README.md`.
 Everything active runs inside `nt-*` namespaces only, never against a real network.
 
+## Phases 4-6: sockets, DNS, DHCP
+
+Phase 4 built the socket layer (`ncx`, `echod`); Phase 5 the DNS name/message codec and the stub
+resolver `dnsq`; Phase 6 the DHCP codec and the DORA client `dhcpc`. The oracles below run without
+root; the lab rows need root and stay inside `nt-*`.
+
+```bash
+# Phase 5: DNS
+make dns-oracle                          # tshark diff, dig row, malformed statuses, spoof demo
+sudo lab/up.sh dnslab --force && sudo lab/svc.sh dns up
+sudo lab/ex c1 env NT_LAB=1 build/asan/bin/dnsq -s 10.0.5.1 -t A www.example.test --iter
+sudo lab/scenarios-dns.sh                # iterative walk + TC->TCP + off-path spoof
+
+# Phase 6: DHCP
+make dhcp-oracle                         # tshark diff, 15 malformed statuses, 11 hostile leases
+sudo lab/up.sh dhcp1 --force && sudo lab/svc.sh dhcp up
+sudo lab/ex c1 env NT_LAB=1 build/asan/bin/dhcpc -i eth0 --lease-file /tmp/lease
+sudo lab/apply-lease.sh c1 --lease-file /tmp/lease
+sudo lab/scenarios-dhcp.sh               # DORA + broadcast flag + rogue
+sudo lab/svc.sh dhcp starve && sudo scripts/dhcp-starvation.sh   # exhaust a 10-address pool
+```
+
 ## Next
 
-Phases 2+3 are complete (see `docs/phase2-3.md`). The next phase (raw sockets / TCP observation / DNS)
-kicks off from the template in `AGENTS.md`.
+Phases 1-6 are complete (see `docs/phase1.md`, `docs/phase2-3.md`, `docs/phase4.md`,
+`docs/phase5.md`, `docs/phase6.md`). The next phase (raw sockets / port scanning) kicks off from
+the template in `AGENTS.md`.
 

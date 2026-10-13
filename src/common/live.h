@@ -25,4 +25,9 @@ int nt_live_next(nt_live *l, uint8_t *buf, size_t cap, size_t *caplen, uint64_t 
 
 void nt_live_close(nt_live *l);
 
+/* Drop from root to the invoking user (SUDO_UID/SUDO_GID when present) while
+ * retaining CAP_NET_RAW only. Returns 0 on success, -1 on error; a no-op when
+ * not root. Call after opening the raw socket. */
+int nt_drop_privs(void);
+
 #endif /* NT_LIVE_H */

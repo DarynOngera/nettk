@@ -17,6 +17,8 @@ docs/phase1-evidence/*.pcapng
 
 # generated fuzz corpus
 fuzz/corpus/
+fuzz/corpus-dns/
+fuzz/corpus-dhcp/
 
 # python
 __pycache__/

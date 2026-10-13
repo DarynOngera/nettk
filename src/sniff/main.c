@@ -9,6 +9,8 @@
  * --tsv columns and order match scripts/tshark-fields.sh exactly.
  */
 #include "nettk.h"
+#include "dhcp.h"
+#include "dns.h"
 #include "live.h"
 #include "pcap.h"
 #include "tcp_trace.h"
@@ -32,13 +34,15 @@ static void on_signal(int sig)
 static void usage(FILE *f, const char *prog)
 {
     fprintf(f,
-            "usage: %s (-r <file> | -i <if>) [-w <out>] [--tsv] [-x] [--tcp-trace] [-c N]\n"
+            "usage: %s (-r <file> | -i <if>) [-w <out>] [--tsv] [-x] [--tcp-trace] [--dns] [--dhcp] [-c N]\n"
             "  -r <file>   read a classic pcap file\n"
             "  -i <if>     live AF_PACKET capture\n"
             "  -w <out>    write classic pcap (Ethernet)\n"
             "  -c <N>      stop after N packets\n"
             "  --tsv       TSV output matching scripts/tshark-fields.sh\n"
             "  --tcp-trace one line per TCP segment: flags, relative seq/ack, win, opts\n"
+            "  --dns       decoded DNS messages on UDP/TCP port 53 (no TCP reassembly)\n"
+            "  --dhcp      decoded DHCP/BOOTP messages on UDP ports 67/68\n"
             "  -x          hex dump with field-offset annotations\n",
             prog);
 }
@@ -263,6 +267,181 @@ static nt_flow *flow_get(int fam, const uint8_t src[16], const uint8_t dst[16],
     return f;
 }
 
+/*
+ * --dns: decode DNS carried on UDP or TCP port 53. There is no TCP
+ * reassembly in this phase: a segment that does not hold the full message
+ * (2-byte length prefix + body) is reported as partial.
+ */
+static void print_dns(const nt_packet *p, unsigned long long num)
+{
+    const uint8_t *msg = NULL;
+    size_t msglen = 0;
+    int tcp = 0;
+    unsigned sport, dport;
+    char sb[46], db[46];
+
+    if (p->has_udp && (p->udp.sport == 53 || p->udp.dport == 53)) {
+        msg = p->udp.payload.data;
+        msglen = p->udp.payload.len;
+        sport = p->udp.sport;
+        dport = p->udp.dport;
+    } else if (p->has_tcp && (p->tcp.sport == 53 || p->tcp.dport == 53)) {
+        tcp = 1;
+        sport = p->tcp.sport;
+        dport = p->tcp.dport;
+        if (p->tcp.payload.len >= 2) {
+            size_t mlen = ((size_t)p->tcp.payload.data[0] << 8) | p->tcp.payload.data[1];
+            if (p->tcp.payload.len - 2 >= mlen) {
+                msg = p->tcp.payload.data + 2;
+                msglen = mlen;
+            }
+        }
+    } else {
+        return;
+    }
+
+    if (p->has_ipv4) {
+        fmt_v4(sb, p->ip4.src);
+        fmt_v4(db, p->ip4.dst);
+    } else {
+        fmt_v6(sb, p->ip6.src);
+        fmt_v6(db, p->ip6.dst);
+    }
+
+    if (msg == NULL) {
+        printf("#%llu %s %s:%u -> %s:%u DNS status=partial\n", num,
+               tcp ? "TCP" : "UDP", sb, sport, db, dport);
+        return;
+    }
+
+    nt_dns_msg m;
+    nt_status s = nt_dns_msg_decode(msg, msglen, &m);
+    if (s != NT_OK) {
+        printf("#%llu %s %s:%u -> %s:%u DNS status=%s\n", num,
+               tcp ? "TCP" : "UDP", sb, sport, db, dport, nt_status_str(s));
+        return;
+    }
+
+    printf("#%llu %s %s:%u -> %s:%u DNS id=0x%04x flags=0x%04x qr=%u opcode=%u "
+           "aa=%u tc=%u rd=%u ra=%u z=%u ad=%u cd=%u rcode=%u qd=%u an=%u ns=%u ar=%u\n",
+           num, tcp ? "TCP" : "UDP", sb, sport, db, dport,
+           m.id, m.flags, m.qr, m.opcode, m.aa, m.tc, m.rd, m.ra, m.z, m.ad, m.cd,
+           m.full_rcode, m.qd, m.an, m.ns, m.ar);
+
+    for (unsigned i = 0; i < m.qd; i++) {
+        printf("  q: %s %s %u\n", m.q[i].qname, nt_dns_type_str(m.q[i].qtype),
+               m.q[i].qclass);
+    }
+
+    static const char *const names[3] = { "an", "ns", "ar" };
+    const nt_dns_rr *arr[3] = { m.an_rr, m.ns_rr, m.ar_rr };
+    unsigned cnt[3] = { m.an, m.ns, m.ar };
+    for (int sec = 0; sec < 3; sec++) {
+        for (unsigned i = 0; i < cnt[sec]; i++) {
+            char own[NT_DNS_NAME_STR_MAX], rd[2048];
+            size_t end;
+            if (nt_dns_name_parse(m.buf, m.len, arr[sec][i].name_off, own, sizeof own, &end) != NT_OK)
+                snprintf(own, sizeof own, "?");
+            if (nt_dns_rdata_str(&m, &arr[sec][i], rd, sizeof rd) != NT_OK)
+                snprintf(rd, sizeof rd, "?");
+            printf("  %s[%u]: %s %s %u %s\n", names[sec], i, own,
+                   nt_dns_type_str(arr[sec][i].type), arr[sec][i].ttl, rd);
+        }
+    }
+}
+
+/*
+ * --dhcp: decode BOOTP/DHCP carried on UDP 67/68. Both directions are printed
+ * (client :68 <-> server :67). A decode failure is reported as status=<...>;
+ * the printer never trusts a field it has not length-checked in the library.
+ */
+static void print_dhcp(const nt_packet *p, unsigned long long num)
+{
+    if (!p->has_udp)
+        return;
+    unsigned sport = p->udp.sport, dport = p->udp.dport;
+    int is67 = (sport == NT_DHCP_SERVER_PORT || dport == NT_DHCP_SERVER_PORT);
+    int is68 = (sport == NT_DHCP_CLIENT_PORT || dport == NT_DHCP_CLIENT_PORT);
+    if (!(is67 && is68))
+        return;
+
+    char sb[46], db[46];
+    if (p->has_ipv4) {
+        fmt_v4(sb, p->ip4.src);
+        fmt_v4(db, p->ip4.dst);
+    } else {
+        fmt_v6(sb, p->ip6.src);
+        fmt_v6(db, p->ip6.dst);
+    }
+
+    nt_dhcp m;
+    nt_status s = nt_dhcp_decode(p->udp.payload.data, p->udp.payload.len, &m);
+    if (s != NT_OK) {
+        printf("#%llu UDP %s:%u -> %s:%u DHCP status=%s\n", num, sb, sport, db, dport,
+               nt_status_str(s));
+        return;
+    }
+
+    char ci[16], yi[16], si[16], gi[16], ch[18];
+    fmt_v4(ci, m.ciaddr);
+    fmt_v4(yi, m.yiaddr);
+    fmt_v4(si, m.siaddr);
+    fmt_v4(gi, m.giaddr);
+    fmt_mac(ch, m.chaddr);
+
+    printf("#%llu UDP %s:%u -> %s:%u DHCP op=%s htype=%u hlen=%u xid=0x%08x secs=%u "
+           "flags=0x%04x broadcast=%u ci=%s yi=%s si=%s gi=%s chaddr=%s type=%s\n",
+           num, sb, sport, db, dport, nt_dhcp_op_str(m.op), m.htype, m.hlen, m.xid, m.secs,
+           m.flags, m.broadcast, ci, yi, si, gi, ch,
+           m.has_msg_type ? nt_dhcp_msg_type_str(m.msg_type) : "-");
+
+    if (m.has_server_id) {
+        char t[16];
+        fmt_v4(t, m.server_id);
+        printf("  server_id=%s\n", t);
+    }
+    if (m.has_requested) {
+        char t[16];
+        fmt_v4(t, m.requested_ip);
+        printf("  requested=%s\n", t);
+    }
+    if (m.has_lease)
+        printf("  lease=%u\n", m.lease_time);
+    if (m.has_t1)
+        printf("  t1=%u\n", m.t1);
+    if (m.has_t2)
+        printf("  t2=%u\n", m.t2);
+    if (m.has_mask) {
+        char t[16];
+        fmt_v4(t, m.mask);
+        printf("  mask=%s\n", t);
+    }
+    if (m.has_router) {
+        printf("  router=");
+        for (unsigned i = 0; i < m.nrouter; i++) {
+            char t[16];
+            fmt_v4(t, m.router[i]);
+            printf("%s%s", i ? "," : "", t);
+        }
+        printf("\n");
+    }
+    if (m.has_dns) {
+        printf("  dns=");
+        for (unsigned i = 0; i < m.ndns; i++) {
+            char t[16];
+            fmt_v4(t, m.dns[i]);
+            printf("%s%s", i ? "," : "", t);
+        }
+        printf("\n");
+    }
+    if (m.has_hostname)
+        printf("  hostname=%s\n", m.hostname);
+    if (m.has_domain)
+        printf("  domain=%s\n", m.domain);
+    if (m.has_message)
+        printf("  msg=%s\n", m.message);
+}
+
 static void print_trace(const nt_packet *p, unsigned long long num)
 {
     if (!p->has_tcp) {
@@ -326,9 +505,13 @@ static void print_trace(const nt_packet *p, unsigned long long num)
 
 static void emit(const nt_packet *pkt, const uint8_t *buf, size_t caplen,
                  unsigned long long num, size_t origlen, int tsv, int hex,
-                 int trace)
+                 int trace, int dns, int dhcp)
 {
-    if (trace) {
+    if (dns) {
+        print_dns(pkt, num);
+    } else if (dhcp) {
+        print_dhcp(pkt, num);
+    } else if (trace) {
         print_trace(pkt, num);
     } else if (tsv) {
         print_tsv(pkt, num, origlen);
@@ -347,6 +530,8 @@ int main(int argc, char **argv)
     int tsv = 0;
     int hex = 0;
     int trace = 0;
+    int dns = 0;
+    int dhcp = 0;
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-r") == 0 && i + 1 < argc) {
@@ -361,6 +546,10 @@ int main(int argc, char **argv)
             tsv = 1;
         } else if (strcmp(argv[i], "--tcp-trace") == 0) {
             trace = 1;
+        } else if (strcmp(argv[i], "--dns") == 0) {
+            dns = 1;
+        } else if (strcmp(argv[i], "--dhcp") == 0) {
+            dhcp = 1;
         } else if (strcmp(argv[i], "-x") == 0) {
             hex = 1;
         } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
@@ -420,7 +609,7 @@ int main(int argc, char **argv)
             nt_packet pkt;
             nt_status s = nt_decode_frame(buf, caplen, &pkt);
             stats[(unsigned)s < 4u ? (unsigned)s : 0u]++;
-            emit(&pkt, buf, caplen, num, origlen, tsv, hex, trace);
+            emit(&pkt, buf, caplen, num, origlen, tsv, hex, trace, dns, dhcp);
             emitted++;
             if (count > 0 && emitted >= count) {
                 break;
@@ -474,7 +663,7 @@ int main(int argc, char **argv)
             nt_packet pkt;
             nt_status s = nt_decode_frame(buf, caplen, &pkt);
             stats[(unsigned)s < 4u ? (unsigned)s : 0u]++;
-            emit(&pkt, buf, caplen, num, caplen, tsv, hex, trace);
+            emit(&pkt, buf, caplen, num, caplen, tsv, hex, trace, dns, dhcp);
             emitted++;
             if (count > 0 && emitted >= count) {
                 break;

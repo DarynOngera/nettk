@@ -165,6 +165,23 @@ case "$topo" in
     t "tcpdump sees ICMP on r1/e1"           cap_works r1 e1 h1 10.0.2.2
     cap_dst="e1"; cap_host=r1
     ;;
+  dnslab)
+    why "the client reaches the three authoritative servers and the recursive resolver"
+    t "c1 -> root (.1)"                      nt_ex c1 ping -c1 -W1 10.0.5.1
+    t "c1 -> tld (.2)"                       nt_ex c1 ping -c1 -W1 10.0.5.2
+    t "c1 -> auth (.3)"                      nt_ex c1 ping -c1 -W1 10.0.5.3
+    t "c1 -> rec (.53)"                      nt_ex c1 ping -c1 -W1 10.0.5.53
+    why "one /24: every node is in the same broadcast domain, so no hop decrements TTL"
+    t "TTL stays 64 inside one segment"      ping_ttl c1 10.0.5.1 64
+    cap_dst="eth0"; cap_host=c1
+    ;;
+  dhcp1)
+    why "server and rogue share the bridge and can reach each other directly"
+    t "dhcpd -> rogue"                       nt_ex dhcpd ping -c1 -W1 10.0.6.66
+    why "c1 starts with no IPv4 address: obtaining one over DHCP is the point of this phase"
+    t "c1 has no IPv4 address"               bash -c "! ip netns exec ${NT_PREFIX}c1 ip -4 addr show eth0 | grep -q 'inet '"
+    cap_dst="eth0"; cap_host=c1
+    ;;
   *) echo "no checks defined for topology '$topo'"; exit 1 ;;
 esac
 
