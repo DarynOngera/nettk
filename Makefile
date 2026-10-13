@@ -58,7 +58,7 @@ $(foreach t,$(TOOLS),$(eval $(call TOOL_RULE,$(t))))
 .PHONY: all help clean test san-test fuzz fuzz-seeds fuzz-seeds-dns fuzz-seeds-dhcp fuzz-run fixtures golden deps \
         lab-up lab-down lab-status lab-check lab-wizard phase0 \
         oracle-traceroute scenarios-traceroute scenarios-arp scenarios-ndp arpmon-check \
-        scenarios-spoof scenarios-dns dns-oracle
+        scenarios-spoof scenarios-dns dns-oracle scenarios-dhcp dhcp-oracle
 
 all: $(BINS) ## build every tool (BUILD=asan|tsan|release)
 
@@ -153,6 +153,8 @@ dns-oracle: ## diff sniff --dns / dnsq against tshark and dig (no root)
 > scripts/dns-malformed-status.sh
 > scripts/dnsq-vs-dig.sh
 > scripts/dns-spoof-demo.sh
+scenarios-dhcp: ## M20-M22 DORA, broadcast flag, rogue server (dhcp1)
+> $(SUDO) lab/scenarios-dhcp.sh
 
 dhcp-oracle: ## diff sniff --dhcp against tshark and hostile-lease tests (no root)
 > scripts/tshark-dhcp.sh fixtures/dhcp-good.pcap

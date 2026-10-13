@@ -46,7 +46,9 @@ Needs a real Linux kernel with namespaces (VM, bare metal, or WSL2). Containers 
 
 - `basic`: h1 -- rtr -- h2, two routed /24s (10.0.1.0/24, 10.0.2.0/24). MACs `02:00:00:00:<net>:<host>`.
 - `line4`: h1 -- r1 -- r2 -- h2, two routers across 10.0.1.0/24, 10.0.9.0/30, 10.0.2.0/24; for traceroute and TTL work.
-- `bridge3`: h1, h2, h3 on one bridged segment 10.0.0.0/24 for ARP, DHCP, and broadcast experiments.
+- `bridge3`: h1, h2, h3 on one bridged segment 10.0.0.0/24 for ARP and broadcast experiments.
+- `dnslab`: c1 against root/tld/auth servers (10.0.5.1-3) and a recursive resolver (10.0.5.4); `lab/svc.sh dns up`.
+- `dhcp1`: c1 (no address) + dnsmasq server (10.0.6.1) + rogue (10.0.6.66) on one bridge; `lab/svc.sh dhcp up`.
 
 Add a topology by dropping `lab/topo/<name>.sh` defining `topo_up` and `topo_hint`.
 
