@@ -55,7 +55,7 @@ $(OUT)/bin/$(1): $$($(1)_OBJ) $$(COMMONDEP) $$(LIBDEP)
 endef
 $(foreach t,$(TOOLS),$(eval $(call TOOL_RULE,$(t))))
 
-.PHONY: all help clean test san-test fuzz fuzz-seeds fuzz-seeds-dns fuzz-run fixtures golden deps \
+.PHONY: all help clean test san-test fuzz fuzz-seeds fuzz-seeds-dns fuzz-seeds-dhcp fuzz-run fixtures golden deps \
         lab-up lab-down lab-status lab-check lab-wizard phase0 \
         oracle-traceroute scenarios-traceroute scenarios-arp scenarios-ndp arpmon-check \
         scenarios-spoof scenarios-dns dns-oracle
@@ -104,14 +104,18 @@ fuzz-seeds: fixtures ## extract raw-packet fuzz seeds from fixtures/*.pcap
 fuzz-seeds-dns: fixtures ## extract raw DNS payload seeds into fuzz/corpus-dns
 > scripts/fuzz-seeds-dns.sh fuzz/corpus-dns
 
-fuzz-run: fuzz fuzz-seeds fuzz-seeds-dns ## build and fuzz every target for 5 minutes
+fuzz-seeds-dhcp: fixtures ## extract raw DHCP payload seeds into fuzz/corpus-dhcp
+> scripts/fuzz-seeds-dhcp.sh fuzz/corpus-dhcp
+
+fuzz-run: fuzz fuzz-seeds fuzz-seeds-dns fuzz-seeds-dhcp ## build and fuzz every target for 5 minutes
 > @for t in build/fuzz/fuzz_*; do \
 >   echo "== $$t"; \
->   "$$t" fuzz/corpus fuzz/corpus-dns -max_total_time=300 -print_final_stats=1 || exit 1; \
+>   "$$t" fuzz/corpus fuzz/corpus-dns fuzz/corpus-dhcp -max_total_time=300 -print_final_stats=1 || exit 1; \
 > done
 
 fixtures: ## generate scapy test captures into fixtures/
 > python3 py/gen_fixtures.py fixtures
+> python3 py/gen_dhcp_fixtures.py fixtures
 
 golden: ## regenerate scapy golden vectors for the M1 builders
 > python3 py/gen_golden.py fixtures/golden
@@ -149,6 +153,10 @@ dns-oracle: ## diff sniff --dns / dnsq against tshark and dig (no root)
 > scripts/dns-malformed-status.sh
 > scripts/dnsq-vs-dig.sh
 > scripts/dns-spoof-demo.sh
+
+dhcp-oracle: ## diff sniff --dhcp against tshark (no root)
+> scripts/tshark-dhcp.sh fixtures/dhcp-good.pcap
+> scripts/dhcp-malformed-status.sh
 
 phase0: ## full Phase 0 acceptance: sanitizers, fixtures, lab up, lab checks
 > $(MAKE) san-test

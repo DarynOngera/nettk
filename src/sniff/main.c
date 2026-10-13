@@ -9,6 +9,7 @@
  * --tsv columns and order match scripts/tshark-fields.sh exactly.
  */
 #include "nettk.h"
+#include "dhcp.h"
 #include "dns.h"
 #include "live.h"
 #include "pcap.h"
@@ -33,7 +34,7 @@ static void on_signal(int sig)
 static void usage(FILE *f, const char *prog)
 {
     fprintf(f,
-            "usage: %s (-r <file> | -i <if>) [-w <out>] [--tsv] [-x] [--tcp-trace] [--dns] [-c N]\n"
+            "usage: %s (-r <file> | -i <if>) [-w <out>] [--tsv] [-x] [--tcp-trace] [--dns] [--dhcp] [-c N]\n"
             "  -r <file>   read a classic pcap file\n"
             "  -i <if>     live AF_PACKET capture\n"
             "  -w <out>    write classic pcap (Ethernet)\n"
@@ -41,6 +42,7 @@ static void usage(FILE *f, const char *prog)
             "  --tsv       TSV output matching scripts/tshark-fields.sh\n"
             "  --tcp-trace one line per TCP segment: flags, relative seq/ack, win, opts\n"
             "  --dns       decoded DNS messages on UDP/TCP port 53 (no TCP reassembly)\n"
+            "  --dhcp      decoded DHCP/BOOTP messages on UDP ports 67/68\n"
             "  -x          hex dump with field-offset annotations\n",
             prog);
 }
@@ -348,6 +350,98 @@ static void print_dns(const nt_packet *p, unsigned long long num)
     }
 }
 
+/*
+ * --dhcp: decode BOOTP/DHCP carried on UDP 67/68. Both directions are printed
+ * (client :68 <-> server :67). A decode failure is reported as status=<...>;
+ * the printer never trusts a field it has not length-checked in the library.
+ */
+static void print_dhcp(const nt_packet *p, unsigned long long num)
+{
+    if (!p->has_udp)
+        return;
+    unsigned sport = p->udp.sport, dport = p->udp.dport;
+    int is67 = (sport == NT_DHCP_SERVER_PORT || dport == NT_DHCP_SERVER_PORT);
+    int is68 = (sport == NT_DHCP_CLIENT_PORT || dport == NT_DHCP_CLIENT_PORT);
+    if (!(is67 && is68))
+        return;
+
+    char sb[46], db[46];
+    if (p->has_ipv4) {
+        fmt_v4(sb, p->ip4.src);
+        fmt_v4(db, p->ip4.dst);
+    } else {
+        fmt_v6(sb, p->ip6.src);
+        fmt_v6(db, p->ip6.dst);
+    }
+
+    nt_dhcp m;
+    nt_status s = nt_dhcp_decode(p->udp.payload.data, p->udp.payload.len, &m);
+    if (s != NT_OK) {
+        printf("#%llu UDP %s:%u -> %s:%u DHCP status=%s\n", num, sb, sport, db, dport,
+               nt_status_str(s));
+        return;
+    }
+
+    char ci[16], yi[16], si[16], gi[16], ch[18];
+    fmt_v4(ci, m.ciaddr);
+    fmt_v4(yi, m.yiaddr);
+    fmt_v4(si, m.siaddr);
+    fmt_v4(gi, m.giaddr);
+    fmt_mac(ch, m.chaddr);
+
+    printf("#%llu UDP %s:%u -> %s:%u DHCP op=%s htype=%u hlen=%u xid=0x%08x secs=%u "
+           "flags=0x%04x broadcast=%u ci=%s yi=%s si=%s gi=%s chaddr=%s type=%s\n",
+           num, sb, sport, db, dport, nt_dhcp_op_str(m.op), m.htype, m.hlen, m.xid, m.secs,
+           m.flags, m.broadcast, ci, yi, si, gi, ch,
+           m.has_msg_type ? nt_dhcp_msg_type_str(m.msg_type) : "-");
+
+    if (m.has_server_id) {
+        char t[16];
+        fmt_v4(t, m.server_id);
+        printf("  server_id=%s\n", t);
+    }
+    if (m.has_requested) {
+        char t[16];
+        fmt_v4(t, m.requested_ip);
+        printf("  requested=%s\n", t);
+    }
+    if (m.has_lease)
+        printf("  lease=%u\n", m.lease_time);
+    if (m.has_t1)
+        printf("  t1=%u\n", m.t1);
+    if (m.has_t2)
+        printf("  t2=%u\n", m.t2);
+    if (m.has_mask) {
+        char t[16];
+        fmt_v4(t, m.mask);
+        printf("  mask=%s\n", t);
+    }
+    if (m.has_router) {
+        printf("  router=");
+        for (unsigned i = 0; i < m.nrouter; i++) {
+            char t[16];
+            fmt_v4(t, m.router[i]);
+            printf("%s%s", i ? "," : "", t);
+        }
+        printf("\n");
+    }
+    if (m.has_dns) {
+        printf("  dns=");
+        for (unsigned i = 0; i < m.ndns; i++) {
+            char t[16];
+            fmt_v4(t, m.dns[i]);
+            printf("%s%s", i ? "," : "", t);
+        }
+        printf("\n");
+    }
+    if (m.has_hostname)
+        printf("  hostname=%s\n", m.hostname);
+    if (m.has_domain)
+        printf("  domain=%s\n", m.domain);
+    if (m.has_message)
+        printf("  msg=%s\n", m.message);
+}
+
 static void print_trace(const nt_packet *p, unsigned long long num)
 {
     if (!p->has_tcp) {
@@ -411,10 +505,12 @@ static void print_trace(const nt_packet *p, unsigned long long num)
 
 static void emit(const nt_packet *pkt, const uint8_t *buf, size_t caplen,
                  unsigned long long num, size_t origlen, int tsv, int hex,
-                 int trace, int dns)
+                 int trace, int dns, int dhcp)
 {
     if (dns) {
         print_dns(pkt, num);
+    } else if (dhcp) {
+        print_dhcp(pkt, num);
     } else if (trace) {
         print_trace(pkt, num);
     } else if (tsv) {
@@ -435,6 +531,7 @@ int main(int argc, char **argv)
     int hex = 0;
     int trace = 0;
     int dns = 0;
+    int dhcp = 0;
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-r") == 0 && i + 1 < argc) {
@@ -451,6 +548,8 @@ int main(int argc, char **argv)
             trace = 1;
         } else if (strcmp(argv[i], "--dns") == 0) {
             dns = 1;
+        } else if (strcmp(argv[i], "--dhcp") == 0) {
+            dhcp = 1;
         } else if (strcmp(argv[i], "-x") == 0) {
             hex = 1;
         } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
@@ -510,7 +609,7 @@ int main(int argc, char **argv)
             nt_packet pkt;
             nt_status s = nt_decode_frame(buf, caplen, &pkt);
             stats[(unsigned)s < 4u ? (unsigned)s : 0u]++;
-            emit(&pkt, buf, caplen, num, origlen, tsv, hex, trace, dns);
+            emit(&pkt, buf, caplen, num, origlen, tsv, hex, trace, dns, dhcp);
             emitted++;
             if (count > 0 && emitted >= count) {
                 break;
@@ -564,7 +663,7 @@ int main(int argc, char **argv)
             nt_packet pkt;
             nt_status s = nt_decode_frame(buf, caplen, &pkt);
             stats[(unsigned)s < 4u ? (unsigned)s : 0u]++;
-            emit(&pkt, buf, caplen, num, caplen, tsv, hex, trace, dns);
+            emit(&pkt, buf, caplen, num, caplen, tsv, hex, trace, dns, dhcp);
             emitted++;
             if (count > 0 && emitted >= count) {
                 break;
