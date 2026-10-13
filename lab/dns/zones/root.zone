@@ -1,0 +1,7 @@
+$TTL 300
+.                 IN SOA a.root. hostmaster.root. ( 2026101301 3600 600 86400 300 )
+.                 IN NS  a.root.
+a.root.           IN A   10.0.5.1
+; delegation to the TLD
+test.             IN NS  ns.test.
+ns.test.          IN A   10.0.5.2

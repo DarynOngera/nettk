@@ -1,0 +1,9 @@
+$TTL 300
+test.             IN SOA ns.test. hostmaster.test. ( 2026101301 3600 600 86400 300 )
+test.             IN NS  ns.test.
+ns.test.          IN A   10.0.5.2
+; delegation to example.test. WITH glue
+example.test.     IN NS  ns.example.test.
+ns.example.test.  IN A   10.0.5.3
+; glueless delegation (optional stretch): ns.other.test. has no A record here
+corp.test.        IN NS  ns.other.test.
