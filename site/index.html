@@ -3,21 +3,21 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="nettk — a learning-driven Linux networking toolkit: decode, sniff, ping, traceroute, ARP/NDP, monitor, spoof.">
+<meta name="description" content="nettk — a learning-driven Linux networking toolkit: decode, sniff, ping, traceroute, ARP/NDP, sockets (ncx/echod), monitor, spoof.">
 <title>nettk(1) — Linux network toolkit manual</title>
   <link rel="icon" href="icon.jpeg">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="nettk">
   <meta property="og:url" content="https://darynongera.github.io/nettk/">
   <meta property="og:title" content="nettk — Linux network toolkit manual">
-  <meta property="og:description" content="nettk — a learning-driven Linux networking toolkit: decode, sniff, ping, traceroute, ARP/NDP, monitor, spoof. Manpage-style manual.">
+  <meta property="og:description" content="nettk — a learning-driven Linux networking toolkit: decode, sniff, ping, traceroute, ARP/NDP, sockets (ncx/echod), monitor, spoof. Manpage-style manual.">
   <meta property="og:image" content="https://darynongera.github.io/nettk/icon.jpeg">
   <meta property="og:image:type" content="image/jpeg">
   <meta property="og:image:width" content="626">
   <meta property="og:image:height" content="626">
   <meta name="twitter:card" content="summary">
   <meta name="twitter:title" content="nettk — Linux network toolkit manual">
-  <meta name="twitter:description" content="nettk — a learning-driven Linux networking toolkit: decode, sniff, ping, traceroute, ARP/NDP, monitor, spoof. Manpage-style manual.">
+  <meta name="twitter:description" content="nettk — a learning-driven Linux networking toolkit: decode, sniff, ping, traceroute, ARP/NDP, sockets (ncx/echod), monitor, spoof. Manpage-style manual.">
   <meta name="twitter:image" content="https://darynongera.github.io/nettk/icon.jpeg">
   <script type="application/ld+json">
   {
@@ -25,7 +25,7 @@
     "@type": "WebSite",
     "name": "nettk",
     "url": "https://darynongera.github.io/nettk/",
-    "description": "a learning-driven Linux networking toolkit: decode, sniff, ping, traceroute, ARP/NDP, monitor, spoof"
+    "description": "a learning-driven Linux networking toolkit: decode, sniff, ping, traceroute, ARP/NDP, sockets (ncx/echod), monitor, spoof"
   }
   </script>
   <style>
@@ -73,7 +73,7 @@
 <header>
   <h1>NAME</h1>
   <p><b>nettk</b> — a learning-driven Linux networking toolkit (sniffer, ping, traceroute,
-  ARP/NDP, ARP monitor, lab-only spoofer, namespace lab).</p>
+  ARP/NDP, TCP/UDP sockets, ARP monitor, lab-only spoofer, namespace lab).</p>
   <p class="tag">manual site for the <code>nettk</code> repository · hosted at
   <code>/nettk</code></p>
 </header>
@@ -87,6 +87,7 @@
   <a href="#lab">LAB</a>
   <a href="#topologies">TOPOLOGIES</a>
   <a href="#wire">WIRE LAYOUTS</a>
+  <a href="#sockets">SOCKETS</a>
   <a href="#safety">SAFETY</a>
   <a href="#examples">EXAMPLES</a>
   <a href="#files">FILES</a>
@@ -96,7 +97,7 @@
 
 <section id="synopsis">
   <h2>SYNOPSIS</h2>
-<pre>`sniff`  (-r &lt;file&gt; | -i &lt;if&gt;) [-w out] [--tsv] [-x] [-c N]
+<pre>`sniff`  (-r &lt;file&gt; | -i &lt;if&gt;) [-w out] [--tsv] [-x] [--tcp-trace] [-c N]
 `ping`   [-c N] [-i ms] [-W ms] [-s size] [-t ttl] [-M do|dont] [--dgram] [-6] &lt;host&gt;
 `traceroute` [-n] [-I] [-M do|dont] [-m max_ttl] [-f first_ttl] [-W ms] [-s size] [-p port] &lt;host&gt;
 `arp`    -i &lt;iface&gt; [--probe] [-c tries] [-W ms] &lt;ipv4&gt;
@@ -104,9 +105,13 @@
 `ndp`    -i &lt;iface&gt; [-c tries] [-W ms] &lt;ipv6&gt;
 `arpmon` (-r &lt;file.pcap&gt; | -i &lt;iface&gt;)
 `arpspoof` -i &lt;iface&gt; -t &lt;victim-ip&gt; -s &lt;spoof-ip&gt; [-n count] [-p period_ms]
+`ncx`    [-l] [-u] [-4|-6] [-s addr] [-p port] [-N] [-w sec] [host port]
+`ncx`    -l -p port [--linger0] [--nodelay] [--quickack] [--cork]
+`echod`  --bind &lt;lab-addr&gt; --port &lt;port&gt; [--max-conns N] [--backlog N] [--no-accept] [--et]
+         [--idle sec] [--nodelay] [--quickack] [--cork] [--stats]
 
 sudo lab/up.sh &lt;basic|line4|bridge3&gt; [--force]     bring up a topology
-sudo lab/wizard.sh &lt;basic|line4|bridge3&gt; [--text|--yes]  guided tour
+sudo lab/wizard.sh &lt;lesson&gt; [--text|--yes]         guided tour (--list for lessons)
 sudo lab/ex &lt;host&gt; &lt;command...&gt;                      run inside nt-&lt;host&gt;</pre>
 </section>
 
@@ -120,8 +125,9 @@ sudo lab/ex &lt;host&gt; &lt;command...&gt;                      run inside nt-&
   forwarding) is confined to disposable <code>nt-*</code> network namespaces on a virtual
   veth fabric. Nothing in this toolkit may be pointed at a real network.</p>
   <p>Phases: decode library and AF_PACKET sniffer (1), ping/traceroute (2), ARP/NDP and
-  ARP monitor/spoofer (3). The following phases (TCP observation, DNS, DHCP, raw sockets,
-  userspace router/firewall, eBPF) build on the same library and lab.</p>
+  ARP monitor/spoofer (3), TCP/UDP sockets with the netcat-style client <code>ncx</code> and the
+  epoll echo server <code>echod</code> (4). The following phases (DNS, DHCP, raw sockets, port
+  scanning, userspace router/firewall, eBPF) build on the same library and lab.</p>
 </section>
 
 <section id="tools">
@@ -200,6 +206,31 @@ sudo lab/ex &lt;host&gt; &lt;command...&gt;                      run inside nt-&
     <li>It exists to demonstrate detection: run it with <code>arpmon</code>, then pin the victim
     with a <code>permanent</code> neighbour entry and watch the poison fail.</li>
   </ul>
+
+  <h3>ncx — numeric netcat</h3>
+  <p class="cmd">ncx [-l] [-u] [-4|-6] [-s addr] [-p port] [-N] [-w sec] [host port]</p>
+  <ul>
+    <li>TCP by default; <code>-u</code> UDP; <code>-l</code> listen. Numeric addresses only (no
+    name resolution), and <b>no <code>-e</code>/<code>-c</code></b>: it never executes a command.</li>
+    <li>On stdin EOF it keeps the socket open by default; <code>-N</code> half-closes with
+    <code>shutdown(SHUT_WR)</code> and keeps reading until the peer closes. Exit codes separate
+    usage, connect, write and timeout errors.</li>
+    <li>Every fd is created <code>CLOEXEC</code>; all sends use <code>MSG_NOSIGNAL</code>; partial
+    reads and writes are handled.</li>
+  </ul>
+
+  <h3>echod — epoll echo server</h3>
+  <p class="cmd">echod --bind &lt;lab-addr&gt; --port &lt;port&gt; [--max-conns N] [--backlog N] [--no-accept] [--et] [--idle sec] [--nodelay] [--quickack] [--cork]</p>
+  <ul>
+    <li>Single-threaded <code>epoll</code>, level-triggered by default, with a fixed connection
+    slab allocated at startup (no per-connection <code>malloc</code>), <code>accept4</code> and
+    nonblocking sockets.</li>
+    <li>Backpressure: when a connection's output buffer is full it stops reading that connection
+    instead of growing memory or blocking the loop. Idle timeout via <code>timerfd</code>;
+    SIGINT/SIGTERM via <code>signalfd</code>.</li>
+    <li><code>--et</code>, <code>--nodelay</code>, <code>--quickack</code> and <code>--cork</code> exist
+    to make edge-triggered draining, Nagle and delayed ACK measurable on the wire.</li>
+  </ul>
 </section>
 
 <section id="lab">
@@ -215,7 +246,7 @@ sudo lab/ex &lt;host&gt; &lt;command...&gt;                      run inside nt-&
     <tr><td><code>lab/status.sh</code></td><td>Addresses, routes, neighbours of every namespace.</td></tr>
     <tr><td><code>lab/cap.sh &lt;host&gt; &lt;if&gt; [bpf]</code></td><td>tcpdump into <code>captures/</code>.</td></tr>
     <tr><td><code>lab/check.sh [--why]</code></td><td>Smoke checks for the active topology; <code>--why</code> adds a one-line rationale per check.</td></tr>
-    <tr><td><code>lab/wizard.sh &lt;topo&gt; [--text|--yes]</code></td><td>Annotated guided tour — explains, runs, then reads the output back at you; <code>--text</code> prints without executing.</td></tr>
+    <tr><td><code>lab/wizard.sh &lt;lesson&gt; [--text|--yes]</code></td><td>Annotated guided tour — explains, runs, then reads the output back at you; <code>--text</code> prints without executing, <code>--list</code> lists lessons.</td></tr>
     <tr><td><code>lab/scenarios-*.sh</code></td><td>Non-interactive PASS/FAIL experiments (hostile responders, spoof, traceroute errors).</td></tr>
   </table>
 </section>
@@ -290,6 +321,56 @@ sudo lab/ex &lt;host&gt; &lt;command...&gt;                      run inside nt-&
   </table>
 </section>
 
+<section id="sockets">
+  <h2>SOCKETS</h2>
+  <p>A socket is a kernel object, not a wire. Two kernels agree on state (sequence numbers, windows,
+  queues) and the packets are just the visible part. <code>ncx</code> and <code>echod</code> exist to
+  make that state observable from three sides at once, and every experiment must agree on all three:</p>
+  <table>
+    <tr><th>View</th><th>How</th><th>What it answers</th></tr>
+    <tr><td>tool output</td><td><code>ncx</code> / <code>echod</code> (bytes, exit code, counters)</td><td>what your code saw</td></tr>
+    <tr><td>kernel view</td><td><code>ss -tan</code>, <code>ss -ltn</code>, <code>ss -ti</code>, <code>nstat</code></td><td>what the stack believes, including queues and timers</td></tr>
+    <tr><td>wire view</td><td><code>sniff --tcp-trace</code> or <code>tcpdump</code></td><td>what actually crossed the link</td></tr>
+  </table>
+
+  <h3>Facts worth deriving, not memorising</h3>
+  <ul>
+    <li><b>Connect completes before accept.</b> The kernel finishes the handshake; the connection waits
+    in the accept queue (Recv-Q on a <code>ss -ltn</code> LISTEN row) until <code>accept()</code> drains
+    it. The queue holds up to <code>backlog + 1</code> entries, capped by
+    <code>net.core.somaxconn</code>; overflows show up in <code>nstat</code> as
+    <code>ListenOverflows</code>/<code>ListenDrops</code>.</li>
+    <li><b>TIME_WAIT belongs to the side that closed first.</b> It lasts 60&nbsp;s on Linux (a fixed
+    <code>TCP_TIMEWAIT_LEN</code>, not the RFC's configurable 2×MSL). <code>SO_REUSEADDR</code> lets a
+    listener bind through it; only <code>SO_REUSEPORT</code> lets two listeners share a port.</li>
+    <li><b>RST is normal.</b> A closed port answers RST (fast <code>ECONNREFUSED</code>), close with
+    <code>SO_LINGER{1,0}</code> sends RST, and <code>close()</code> with unread received data turns the
+    FIN into a RST.</li>
+    <li><b>Nagle + delayed ACK</b> can hold a second small write for about 40&nbsp;ms;
+    <code>TCP_NODELAY</code> disables Nagle, <code>TCP_CORK</code>/<code>MSG_MORE</code> batch the
+    other way.</li>
+    <li><b>UDP keeps message boundaries.</b> A too-small receive truncates and sets
+    <code>MSG_TRUNC</code>; a connected UDP socket reports ICMP port-unreachable as
+    <code>ECONNREFUSED</code> on a <i>later</i> call.</li>
+    <li><b>Dual-stack listeners</b> have <code>IPV6_V6ONLY</code> defaulting to 0 on Linux, so a v6
+    listener also accepts IPv4-mapped connections; <code>echod</code> sets it explicitly.</li>
+  </ul>
+
+  <h3>Socket options <span class="tag">(set in one table, nowhere else)</span></h3>
+  <table>
+    <tr><th>Option</th><th>Level</th><th>Where</th><th>Teaches</th></tr>
+    <tr><td><code>SO_REUSEADDR</code></td><td>SOL_SOCKET</td><td>listener (default on)</td><td>rebinding through TIME_WAIT</td></tr>
+    <tr><td><code>SO_REUSEPORT</code></td><td>SOL_SOCKET</td><td>listener (experiment)</td><td>two listeners, one port; connection stealing</td></tr>
+    <tr><td><code>TCP_NODELAY</code></td><td>IPPROTO_TCP</td><td>accepted conn</td><td>disabling Nagle</td></tr>
+    <tr><td><code>TCP_QUICKACK</code></td><td>IPPROTO_TCP</td><td>accepted conn</td><td>disabling delayed ACK</td></tr>
+    <tr><td><code>TCP_CORK</code>/<code>MSG_MORE</code></td><td>IPPROTO_TCP</td><td>send path</td><td>deliberate batching</td></tr>
+    <tr><td><code>SO_LINGER{1,0}</code></td><td>SOL_SOCKET</td><td>close</td><td>forcing RST</td></tr>
+    <tr><td><code>SO_KEEPALIVE</code> + <code>TCP_KEEPIDLE/INTVL/CNT</code></td><td>SOL_SOCKET/IPPROTO_TCP</td><td>conn</td><td>idle detection at the kernel, not the app</td></tr>
+    <tr><td><code>SO_RCVBUF</code>/<code>SO_SNDBUF</code></td><td>SOL_SOCKET</td><td>conn</td><td>the kernel doubles what you ask for</td></tr>
+    <tr><td><code>IPV6_V6ONLY</code></td><td>IPPROTO_IPV6</td><td>v6 listener</td><td>IPv4-mapped vs v6-only sockets</td></tr>
+  </table>
+</section>
+
 <section id="safety">
   <h2>SAFETY</h2>
   <div class="warn">
@@ -317,12 +398,18 @@ sudo lab/ex h1 traceroute -n -I 10.0.2.2  # ICMP-echo probe, compare with -U
 sudo lab/ex h1 arp -i eth0 -c1 10.0.1.1   # is-at 02:00:00:00:01:01
 sudo lab/ex h1 arp scan -i eth0 10.0.1.0/24
 sudo lab/ex h1 ndp -i eth0 -c1 fd00:1::1  # from a Neighbor Advertisement
-sudo lab/check.sh --why                   # 13 smoke checks, each explained</p>
+sudo lab/check.sh --why                   # 13 smoke checks, each explained
+
+# sockets (Phase 4): server on rtr, client on h1, all on 10.0.1.0/24
+sudo lab/ex rtr env NT_LAB=1 build/asan/bin/echod --bind 10.0.1.1 --port 9000 &
+printf 'hello' | sudo lab/ex h1 env NT_LAB=1 build/asan/bin/ncx -N 10.0.1.1 9000
+sudo lab/ex rtr ss -ltn                   # Recv-Q = accept queue, Send-Q = backlog</p>
   <p>The guided tour runs the same steps as a narrated walkthrough, with predictions to
-  answer before each experiment:</p>
+  answer before each experiment (<code>--list</code> shows every lesson):</p>
   <p class="cmd">sudo lab/wizard.sh basic
 sudo lab/wizard.sh line4
-sudo lab/wizard.sh bridge3</p>
+sudo lab/wizard.sh bridge3
+sudo lab/wizard.sh sockets</p>
 </section>
 
 <section id="files">
@@ -341,10 +428,11 @@ scripts/            tshark/arping/nmap oracle comparisons</pre>
 <section id="see-also">
   <h2>SEE ALSO</h2>
   <p><code>README.md</code>, <code>usage.md</code> (working order + acceptance criteria),
-  <code>docs/phase1.md</code>, <code>docs/phase2-3.md</code>;</p>
-  <p>RFC 791, RFC 792, RFC 826, RFC 894, RFC 2460, RFC 4443, RFC 4861;
-  <code>tcpdump(8)</code>, <code>tshark(1)</code>, <code>ip(8)</code>, <code>arptables(8)</code>,
-  <code>nft(8)</code>.</p>
+  <code>docs/phase1.md</code>, <code>docs/phase2-3.md</code>, <code>docs/phase4.md</code>,
+  <code>docs/phase4-6-prompt.md</code>;</p>
+  <p>RFC 791, RFC 792, RFC 826, RFC 894, RFC 2460, RFC 4443, RFC 4861, RFC 9293 (TCP), RFC 768 (UDP);
+  <code>tcpdump(8)</code>, <code>tshark(1)</code>, <code>ip(8)</code>, <code>ss(8)</code>,
+  <code>nstat(8)</code>, <code>arptables(8)</code>, <code>nft(8)</code>.</p>
 </section>
 
 <footer>

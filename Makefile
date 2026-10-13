@@ -56,7 +56,7 @@ endef
 $(foreach t,$(TOOLS),$(eval $(call TOOL_RULE,$(t))))
 
 .PHONY: all help clean test san-test fuzz fuzz-seeds fuzz-run fixtures golden deps \
-        lab-up lab-down lab-status lab-check phase0 \
+        lab-up lab-down lab-status lab-check lab-wizard phase0 \
         oracle-traceroute scenarios-traceroute scenarios-arp scenarios-ndp arpmon-check \
         scenarios-spoof
 
@@ -121,6 +121,8 @@ lab-status: ## addresses, routes, neighbours
 > $(SUDO) lab/status.sh
 lab-check: ## smoke-test the running lab
 > $(SUDO) lab/check.sh
+lab-wizard: ## guided tour, one lesson per topic (TOPO=basic|line4|bridge3|sockets)
+> $(SUDO) lab/wizard.sh $(TOPO)
 oracle-traceroute: ## compare traceroute hops against traceroute(8) (arg: MODE=udp|icmp)
 > $(SUDO) scripts/oracle-traceroute.sh "" "" $(if $(MODE),$(MODE),udp)
 scenarios-traceroute: ## M6 traceroute error-annotation scenarios (line4)
