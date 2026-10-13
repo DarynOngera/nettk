@@ -11,6 +11,7 @@
 #include "nettk.h"
 #include "live.h"
 #include "pcap.h"
+#include "tcp_trace.h"
 
 #include <arpa/inet.h>
 #include <signal.h>
@@ -31,12 +32,13 @@ static void on_signal(int sig)
 static void usage(FILE *f, const char *prog)
 {
     fprintf(f,
-            "usage: %s (-r <file> | -i <if>) [-w <out>] [--tsv] [-x] [-c N]\n"
+            "usage: %s (-r <file> | -i <if>) [-w <out>] [--tsv] [-x] [--tcp-trace] [-c N]\n"
             "  -r <file>   read a classic pcap file\n"
             "  -i <if>     live AF_PACKET capture\n"
             "  -w <out>    write classic pcap (Ethernet)\n"
             "  -c <N>      stop after N packets\n"
             "  --tsv       TSV output matching scripts/tshark-fields.sh\n"
+            "  --tcp-trace one line per TCP segment: flags, relative seq/ack, win, opts\n"
             "  -x          hex dump with field-offset annotations\n",
             prog);
 }
@@ -178,10 +180,157 @@ static void print_hex(const nt_packet *p, const uint8_t *buf, size_t len)
     if (p->has_icmpv6)   { print_field("icmpv6", p->l4_off, p->l4_off + 8, ""); }
 }
 
-static void emit(const nt_packet *pkt, const uint8_t *buf, size_t caplen,
-                 unsigned long long num, size_t origlen, int tsv, int hex)
+/*
+ * --tcp-trace: one line per TCP segment. Sequence/ack numbers are relative to
+ * the first segment seen in each direction of the flow, like tcpdump's
+ * relative-seq mode, so a capture reads as 0,1,2... instead of raw 32-bit ISNs.
+ *
+ * The flow table is small and fixed: tests and captures with more than
+ * NT_FLOWS concurrent flows simply reuse slots (this is a display aid, not a
+ * stateful stack -- we never claim to reassemble).
+ */
+#define NT_FLOWS 256
+
+typedef struct {
+    int      used;
+    int      family;           /* 4 or 6 */
+    uint8_t  a[16], b[16];     /* key: a=src, b=dst in the first segment seen */
+    uint16_t pa, pb;           /* same, ports */
+    uint32_t base_ab, base_ba; /* first seq seen a->b / b->a */
+    int      have_ab, have_ba;
+} nt_flow;
+
+static nt_flow g_flows[NT_FLOWS];
+static unsigned g_flow_next;
+
+/* Extract the L3 addresses (normalised to 16 bytes, v4 packed at [12..15]) and
+ * TCP ports. Returns 4 or 6 for the family, 0 when there is no TCP flow. */
+static int pkt_addrs(const nt_packet *p, uint8_t src[16], uint8_t dst[16],
+                     uint16_t *sp, uint16_t *dp)
 {
-    if (tsv) {
+    memset(src, 0, 16);
+    memset(dst, 0, 16);
+    if (p->has_ipv4) {
+        uint32_t s = p->ip4.src, d = p->ip4.dst; /* host order */
+        src[12] = (s >> 24) & 0xffu; src[13] = (s >> 16) & 0xffu;
+        src[14] = (s >> 8) & 0xffu;  src[15] = s & 0xffu;
+        dst[12] = (d >> 24) & 0xffu; dst[13] = (d >> 16) & 0xffu;
+        dst[14] = (d >> 8) & 0xffu;  dst[15] = d & 0xffu;
+        *sp = p->tcp.sport;
+        *dp = p->tcp.dport;
+        return 4;
+    }
+    if (p->has_ipv6) {
+        memcpy(src, p->ip6.src, 16);
+        memcpy(dst, p->ip6.dst, 16);
+        *sp = p->tcp.sport;
+        *dp = p->tcp.dport;
+        return 6;
+    }
+    return 0;
+}
+
+/* Find or create the flow. *dir is 0 for (a->b) and 1 for (b->a). */
+static nt_flow *flow_get(int fam, const uint8_t src[16], const uint8_t dst[16],
+                         uint16_t sp, uint16_t dp, int *dir)
+{
+    for (unsigned i = 0; i < NT_FLOWS; i++) {
+        nt_flow *f = &g_flows[i];
+        if (!f->used || f->family != fam) {
+            continue;
+        }
+        if (memcmp(f->a, src, 16) == 0 && memcmp(f->b, dst, 16) == 0 &&
+            f->pa == sp && f->pb == dp) {
+            *dir = 0;
+            return f;
+        }
+        if (memcmp(f->b, src, 16) == 0 && memcmp(f->a, dst, 16) == 0 &&
+            f->pb == sp && f->pa == dp) {
+            *dir = 1;
+            return f;
+        }
+    }
+    nt_flow *f = &g_flows[g_flow_next];
+    g_flow_next = (g_flow_next + 1) % NT_FLOWS;
+    memset(f, 0, sizeof *f);
+    f->used = 1;
+    f->family = fam;
+    memcpy(f->a, src, 16);
+    memcpy(f->b, dst, 16);
+    f->pa = sp;
+    f->pb = dp;
+    *dir = 0;
+    return f;
+}
+
+static void print_trace(const nt_packet *p, unsigned long long num)
+{
+    if (!p->has_tcp) {
+        return;
+    }
+    uint8_t src[16], dst[16];
+    uint16_t sp = 0, dp = 0;
+    int fam = pkt_addrs(p, src, dst, &sp, &dp);
+    if (fam == 0) {
+        return;
+    }
+    int dir = 0;
+    nt_flow *f = flow_get(fam, src, dst, sp, dp, &dir);
+
+    uint32_t base_this = dir == 0 ? f->base_ab : f->base_ba;
+    uint32_t base_other = dir == 0 ? f->base_ba : f->base_ab;
+    int      have_this = dir == 0 ? f->have_ab : f->have_ba;
+    int      have_other = dir == 0 ? f->have_ba : f->have_ab;
+
+    if (!have_this) {
+        base_this = p->tcp.seq;
+        if (dir == 0) {
+            f->base_ab = base_this;
+            f->have_ab = 1;
+        } else {
+            f->base_ba = base_this;
+            f->have_ba = 1;
+        }
+    }
+
+    char flags[10], opts[96];
+    nt_tcp_flags_str(p->tcp.flags, flags);
+    nt_tcp_opts_str(&p->tcp, opts, sizeof opts);
+
+    char sb[46], db[46];
+    if (fam == 4) {
+        fmt_v4(sb, p->ip4.src);
+        fmt_v4(db, p->ip4.dst);
+    } else {
+        fmt_v6(sb, p->ip6.src);
+        fmt_v6(db, p->ip6.dst);
+    }
+
+    size_t plen = p->tcp.payload.len;
+    uint32_t rseq = nt_seq_rel(p->tcp.seq, base_this);
+    printf("#%llu %s.%u > %s.%u: Flags [%s], seq %u", num,
+           sb, (unsigned)sp, db, (unsigned)dp, flags, (unsigned)rseq);
+    if (plen > 0) {
+        printf(":%u", (unsigned)(rseq + (uint32_t)plen));
+    }
+    if (p->tcp.flags & 0x010u) { /* ACK */
+        if (have_other) {
+            printf(", ack %u", (unsigned)nt_seq_rel(p->tcp.ack, base_other));
+        } else {
+            printf(", ack %u", (unsigned)p->tcp.ack);
+        }
+    }
+    printf(", win %u, options [%s], length %zu\n",
+           (unsigned)p->tcp.window, opts, plen);
+}
+
+static void emit(const nt_packet *pkt, const uint8_t *buf, size_t caplen,
+                 unsigned long long num, size_t origlen, int tsv, int hex,
+                 int trace)
+{
+    if (trace) {
+        print_trace(pkt, num);
+    } else if (tsv) {
         print_tsv(pkt, num, origlen);
     } else if (hex) {
         printf("#%llu len=%zu status=%s\n", num, origlen, nt_status_str(pkt->status));
@@ -197,6 +346,7 @@ int main(int argc, char **argv)
     long count = -1;
     int tsv = 0;
     int hex = 0;
+    int trace = 0;
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-r") == 0 && i + 1 < argc) {
@@ -209,6 +359,8 @@ int main(int argc, char **argv)
             count = strtol(argv[++i], NULL, 10);
         } else if (strcmp(argv[i], "--tsv") == 0) {
             tsv = 1;
+        } else if (strcmp(argv[i], "--tcp-trace") == 0) {
+            trace = 1;
         } else if (strcmp(argv[i], "-x") == 0) {
             hex = 1;
         } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
@@ -268,7 +420,7 @@ int main(int argc, char **argv)
             nt_packet pkt;
             nt_status s = nt_decode_frame(buf, caplen, &pkt);
             stats[(unsigned)s < 4u ? (unsigned)s : 0u]++;
-            emit(&pkt, buf, caplen, num, origlen, tsv, hex);
+            emit(&pkt, buf, caplen, num, origlen, tsv, hex, trace);
             emitted++;
             if (count > 0 && emitted >= count) {
                 break;
@@ -322,7 +474,7 @@ int main(int argc, char **argv)
             nt_packet pkt;
             nt_status s = nt_decode_frame(buf, caplen, &pkt);
             stats[(unsigned)s < 4u ? (unsigned)s : 0u]++;
-            emit(&pkt, buf, caplen, num, caplen, tsv, hex);
+            emit(&pkt, buf, caplen, num, caplen, tsv, hex, trace);
             emitted++;
             if (count > 0 && emitted >= count) {
                 break;

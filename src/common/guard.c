@@ -44,6 +44,18 @@ int nt_in_lab_ip(const char *text)
     return 0;
 }
 
+int nt_in_loopback_v4(uint32_t addr)
+{
+    return (addr & 0xff000000u) == 0x7f000000u; /* 127.0.0.0/8 */
+}
+
+int nt_in_loopback_v6(const uint8_t a[16])
+{
+    static const uint8_t lo[16] = { 0, 0, 0, 0, 0, 0, 0, 0,
+                                    0, 0, 0, 0, 0, 0, 0, 1 };
+    return memcmp(a, lo, sizeof lo) == 0; /* ::1 */
+}
+
 static void fmt_v4(char out[16], uint32_t ip)
 {
     snprintf(out, 16, "%u.%u.%u.%u",
@@ -116,6 +128,66 @@ int nt_guard_iface_veth(const char *ifname)
     if (strcmp(info.driver, "veth") != 0) {
         fprintf(stderr, "nettk: refusing ARP/NDP on %s: driver '%s' is not veth\n",
                 ifname, info.driver);
+        return -1;
+    }
+    return 0;
+}
+
+int nt_guard_peer_v4(uint32_t dst)
+{
+    if (nt_guard_lab() != 0)
+        return -1;
+    if (nt_in_lab_v4(dst) || nt_in_loopback_v4(dst))
+        return 0;
+    char b[16];
+    fmt_v4(b, dst);
+    fprintf(stderr, "nettk: refusing socket peer %s: outside 10.0.0.0/16 and loopback\n", b);
+    return -1;
+}
+
+int nt_guard_peer_v6(const uint8_t dst[16])
+{
+    if (nt_guard_lab() != 0)
+        return -1;
+    if (nt_in_lab_v6(dst) || nt_in_loopback_v6(dst))
+        return 0;
+    char b[INET6_ADDRSTRLEN] = "?";
+    inet_ntop(AF_INET6, dst, b, sizeof b);
+    fprintf(stderr, "nettk: refusing socket peer %s: "
+                    "outside fd00::/8, 2001:db8::/32 and loopback\n", b);
+    return -1;
+}
+
+int nt_guard_bind_v4(uint32_t addr)
+{
+    if (nt_guard_lab() != 0)
+        return -1;
+    if (addr == 0u /* INADDR_ANY */ || nt_in_lab_v4(addr) || nt_in_loopback_v4(addr))
+        return 0;
+    char b[16];
+    fmt_v4(b, addr);
+    fprintf(stderr, "nettk: refusing to bind %s: use a lab address, wildcard or loopback\n", b);
+    return -1;
+}
+
+int nt_guard_bind_v6(const uint8_t addr[16])
+{
+    if (nt_guard_lab() != 0)
+        return -1;
+    static const uint8_t any[16] = { 0 };
+    if (memcmp(addr, any, sizeof any) == 0 /* in6addr_any */ ||
+        nt_in_lab_v6(addr) || nt_in_loopback_v6(addr))
+        return 0;
+    char b[INET6_ADDRSTRLEN] = "?";
+    inet_ntop(AF_INET6, addr, b, sizeof b);
+    fprintf(stderr, "nettk: refusing to bind %s: use a lab address, wildcard or loopback\n", b);
+    return -1;
+}
+
+int nt_guard_server_port(uint16_t port)
+{
+    if (port < 1024) {
+        fprintf(stderr, "nettk: refusing server port %u: use 1024 or higher\n", port);
         return -1;
     }
     return 0;

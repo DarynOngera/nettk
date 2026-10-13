@@ -5,6 +5,8 @@
 # full guided transcript survives after the interactive run.
 #
 #   lesson_start <topo> <title>
+#   lesson_topo                       (a lesson may set LESSON_TOPO before lesson_main;
+#                                      lab/wizard.sh uses it to pick the topology)
 #   step <title>                      begin a step (shows a heading)
 #   why     <<EOF ... EOF             rationale, printed before any command
 #   cmd     <verbatim command line>   the exact command being demonstrated
@@ -156,6 +158,16 @@ t_run() {
   run "$host" env NT_LAB=1 "$BIN/$tool" "$@"
 }
 
+# have_tool <name>: true when a tool binary is built (used to skip a step early).
+have_tool() { [[ -x "$BIN/$1" ]]; }
+
+# skip_tool <name> <milestone>: a step whose live check needs a tool not built yet.
+skip_tool() {
+  say "  [skip] $1 is not built yet (${2}); build with 'make BUILD=asan all' and re-run"
+  echo "  [skip] $1 ${2}" >> "$LEARN_LOG"
+  return 0
+}
+
 # run_fail: a deliberate break-and-debug step; non-zero exit is the point.
 run_fail() {
   local rc
@@ -259,9 +271,14 @@ cap() {
 predict() {
   local line answer="" reason="" q=""
   while IFS= read -r line || [[ -n $line ]]; do
-    if [[ $line == answer\ * ]]; then answer=${line#answer }
-    elif [[ $line == because\ * ]]; then reason=${line#because }
-    else q+="$line"$'\n'; fi
+    # Lessons indent their heredocs, so the markers carry leading whitespace.
+    if [[ $line =~ ^[[:space:]]*answer[[:space:]]+(.*[^[:space:]])[[:space:]]*$ ]]; then
+      answer=${BASH_REMATCH[1]}
+    elif [[ $line =~ ^[[:space:]]*because[[:space:]]+(.*)$ ]]; then
+      reason=${BASH_REMATCH[1]}
+    else
+      q+="$line"$'\n'
+    fi
   done
   q=${q%$'\n'}
   say

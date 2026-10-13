@@ -33,6 +33,18 @@ static void test_v6(void)
     NT_CHECK(!nt_in_lab_v6(lo));
 }
 
+static void test_loopback(void)
+{
+    static const uint8_t lo6[16]  = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1 };
+    static const uint8_t ula[16]  = { 0xfd, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1 };
+    NT_CHECK(nt_in_loopback_v4(0x7f000001u));  /* 127.0.0.1 */
+    NT_CHECK(nt_in_loopback_v4(0x7fffffffu));  /* 127.255.255.255 */
+    NT_CHECK(!nt_in_loopback_v4(0x0a000001u)); /* 10.0.0.1 */
+    NT_CHECK(!nt_in_loopback_v4(0x80000001u)); /* 128.0.0.1 */
+    NT_CHECK(nt_in_loopback_v6(lo6));
+    NT_CHECK(!nt_in_loopback_v6(ula));
+}
+
 static void test_parse(void)
 {
     NT_CHECK(nt_in_lab_ip("10.0.9.2"));
@@ -66,12 +78,59 @@ static void test_iface_gate(void)
     NT_EQ_INT(nt_guard_iface_veth("lo"), -1);
 }
 
+static void test_peer_gate(void)
+{
+    static const uint8_t lo6[16]  = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1 };
+    static const uint8_t ula[16]  = { 0xfd, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1 };
+    static const uint8_t wan[16]  = { 0x26, 0x06, 0x47, 0x00, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x11, 0x11 };
+
+    unsetenv("NT_LAB");
+    NT_EQ_INT(nt_guard_peer_v4(0x0a000001u), -1);   /* still needs NT_LAB */
+
+    setenv("NT_LAB", "1", 1);
+    NT_EQ_INT(nt_guard_peer_v4(0x0a000001u), 0);    /* lab */
+    NT_EQ_INT(nt_guard_peer_v4(0x7f000001u), 0);    /* loopback accepted for sockets */
+    NT_EQ_INT(nt_guard_peer_v4(0x08080808u), -1);   /* public refused */
+    NT_EQ_INT(nt_guard_peer_v6(ula), 0);
+    NT_EQ_INT(nt_guard_peer_v6(lo6), 0);
+    NT_EQ_INT(nt_guard_peer_v6(wan), -1);
+}
+
+static void test_bind_gate(void)
+{
+    static const uint8_t any[16] = { 0 };
+    static const uint8_t lo6[16] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1 };
+    static const uint8_t wan[16] = { 0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1 };
+
+    setenv("NT_LAB", "1", 1);
+    NT_EQ_INT(nt_guard_bind_v4(0u), 0);             /* INADDR_ANY */
+    NT_EQ_INT(nt_guard_bind_v4(0x7f000001u), 0);
+    NT_EQ_INT(nt_guard_bind_v4(0x0a000501u), 0);    /* 10.0.5.1 */
+    NT_EQ_INT(nt_guard_bind_v4(0xc0a80001u), -1);   /* 192.168.0.1 */
+    NT_EQ_INT(nt_guard_bind_v6(any), 0);
+    NT_EQ_INT(nt_guard_bind_v6(lo6), 0);
+    NT_EQ_INT(nt_guard_bind_v6(wan), 0);            /* 2001:db8::/32 is lab */
+}
+
+static void test_server_port(void)
+{
+    NT_EQ_INT(nt_guard_server_port(80), -1);        /* well-known refused */
+    NT_EQ_INT(nt_guard_server_port(1023), -1);
+    NT_EQ_INT(nt_guard_server_port(1024), 0);
+    NT_EQ_INT(nt_guard_server_port(9000), 0);
+    NT_EQ_INT(nt_guard_server_port(65535), 0);
+}
+
 int main(void)
 {
     test_v4();
     test_v6();
+    test_loopback();
     test_parse();
     test_lab_gate();
     test_iface_gate();
+    test_peer_gate();
+    test_bind_gate();
+    test_server_port();
     NT_DONE();
 }
