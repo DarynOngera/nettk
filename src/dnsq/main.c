@@ -585,6 +585,8 @@ int main(int argc, char **argv)
             cfg.weak_port = NT_DNSQ_WEAK_PORT;
         } else if (strcmp(argv[i], "-T") == 0 && i + 1 < argc) {
             timeout_s = atol(argv[++i]);
+        } else if (strncmp(argv[i], "-T", 2) == 0 && argv[i][2] != '\0') {
+            timeout_s = atol(argv[i] + 2);
         } else if (argv[i][0] == '-') {
             usage(stderr, argv[0]);
             return 2;
