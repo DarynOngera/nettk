@@ -154,9 +154,10 @@ dns-oracle: ## diff sniff --dns / dnsq against tshark and dig (no root)
 > scripts/dnsq-vs-dig.sh
 > scripts/dns-spoof-demo.sh
 
-dhcp-oracle: ## diff sniff --dhcp against tshark (no root)
+dhcp-oracle: ## diff sniff --dhcp against tshark and hostile-lease tests (no root)
 > scripts/tshark-dhcp.sh fixtures/dhcp-good.pcap
 > scripts/dhcp-malformed-status.sh
+> scripts/apply-lease-check.sh
 
 phase0: ## full Phase 0 acceptance: sanitizers, fixtures, lab up, lab checks
 > $(MAKE) san-test
