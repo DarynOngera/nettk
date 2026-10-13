@@ -3,9 +3,9 @@
 #   c1     10.0.6.10?  client with NO IPv4 address (starts as 0.0.0.0)
 #   dhcpd  10.0.6.1    dnsmasq DHCP server  (pool 10.0.6.100-150, short lease)
 #   rogue  10.0.6.66   second dnsmasq, started on demand (different router/DNS)
-# MACs 02:00:00:00:06:NN. c1 keeps its address in the config so the interface is
-# up with a link-local-free, address-less state; lab/svc.sh dhcp starve swaps in
-# a 10-address pool. See docs/phase6.md.
+# MACs 02:00:00:00:06:NN. c1 keeps its MAC in the config but no IPv4 address,
+# so the interface is up and the client has nothing until DHCP. lab/svc.sh dhcp
+# starve swaps in a 10-address pool. See docs/phase6.md.
 topo_up() {
   nt_ns_add sw
   for n in c1 dhcpd rogue; do nt_ns_add "$n"; done
