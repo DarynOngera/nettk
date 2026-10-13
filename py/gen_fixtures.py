@@ -140,6 +140,59 @@ def arp_flood(n=20000):
     return stamp(pk)
 
 
+def dns_good():
+    """Phase-5 DNS messages exercising the name codec: compression pointers,
+    label+pointer, pointer-to-owner-start, escaped label bytes. Built as raw
+    payloads so the wire bytes are exactly ours (scapy would re-serialize)."""
+    hdr = lambda ident, flags, qd, an: bytes.fromhex(
+        "%04x%04x%04x%04x00000000" % (ident, flags, qd, an))
+    q_www = bytes.fromhex("03777777076578616d706c6503636f6d00") + b"\x00\x01\x00\x01"
+    q_x01y = bytes.fromhex("03780179076578616d706c6503636f6d00") + b"\x00\x01\x00\x01"
+    q_zffz = bytes.fromhex("037aff7a076578616d706c6503636f6d00") + b"\x00\x01\x00\x01"
+    rr_a = bytes.fromhex("c00c000100010000012c0004") + bytes.fromhex("5db8d822")
+    rr_alpha = bytes.fromhex("05616c706861c010000100010000012c0004") + bytes.fromhex("5db8d822")
+    rr_alpha2 = bytes.fromhex("c021000500010000012c0005") + bytes.fromhex("0377777700")
+    payloads = [
+        hdr(0x1234, 0x0100, 1, 0) + q_www,      # plain query
+        hdr(0x1234, 0x8180, 1, 1) + q_www + rr_a,   # answer owner = pointer to qname
+        hdr(0x1235, 0x8180, 1, 2) + q_www + rr_alpha + rr_alpha2,  # label+ptr; ptr to owner start
+        hdr(0x1236, 0x0100, 1, 0) + q_x01y,     # label contains 0x01
+        hdr(0x1237, 0x0100, 1, 0) + q_zffz,     # label contains 0xff
+    ]
+    return [stamp([Ether(src=H1, dst=RT) / IP(src=IP1, dst="10.0.2.53", id=80 + i) /
+                   UDP(sport=40000 + i, dport=53) / Raw(p)])[0]
+            for i, p in enumerate(payloads)]
+
+
+def dns_malformed():
+    """Hostile DNS messages: the name codec must reject all of these cleanly."""
+    hdr12 = bytes.fromhex("1234010000010000" + "0000" + "0000")
+    frames = []
+    def pkt(payload):
+        frames.append(raw(Ether(src=H1, dst=RT) / IP(src=IP1, dst="10.0.2.53", id=90) /
+                          UDP(sport=12345, dport=53) / Raw(payload)))
+    # reserved label type bits 01 (0x41): neither a length nor a pointer
+    pkt(hdr12 + b"\x41" + b"x" * 8)
+    # compression pointer to itself (offset 12 -> 12): infinite loop bait
+    pkt(hdr12 + b"\xc0\x0c" + b"\x00\x01\x00\x01")
+    # forward pointer: target 14 is its own offset
+    pkt(hdr12 + b"\x01a\xc0\x0e" + b"\x00\x01\x00\x01")
+    # 130-pointer chain: every hop strictly decreases, but exceeds the hop cap
+    ptrs = []
+    for i in range(130):
+        target = 0 if i == 0 else 3 + 2 * (i - 1)
+        ptrs.append(bytes([0xc0 | (target >> 8), target & 0xff]))
+    pkt(hdr12 + b"\x01a\x00" + b"".join(ptrs))
+    # expanded name longer than 255 wire octets (5 x 52-byte labels)
+    big = b"".join(bytes([52]) + bytes([0x61 + i]) * 52 for i in range(5)) + b"\x00"
+    pkt(hdr12 + big)
+    # label claims 7 octets but only 5 remain
+    pkt(hdr12 + bytes.fromhex("03777777076578616d70"))
+    # pointer octet cut off (needs 2 bytes, has 1) after a complete qname
+    pkt(hdr12 + bytes.fromhex("0361626300") + b"\xc0")
+    return frames
+
+
 def write_raw_pcap(path, frames):
     """Write raw byte strings as an Ethernet pcap (scapy cannot build runt frames)."""
     with open(path, "wb") as fh:
@@ -157,6 +210,9 @@ def main():
     write_raw_pcap(out / "malformed.pcap", malformed())
     wrpcap(str(out / "arp-spoof.pcap"), arp_spoof())
     wrpcap(str(out / "arp-flood.pcap"), arp_flood())
+    wrpcap(str(out / "dns-good.pcap"), dns_good())
+    write_raw_pcap(out / "dns-malformed.pcap", dns_malformed())
+    print("wrote dns-good.pcap, dns-malformed.pcap")
     print(f"wrote {out}/basic.pcap, ipv6.pcap, malformed.pcap, arp-spoof.pcap, arp-flood.pcap")
 
 

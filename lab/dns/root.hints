@@ -1,0 +1,3 @@
+; lab/dns/root.hints - the ONLY thing a resolver knows before its first query.
+.          IN NS  a.root.
+a.root.    IN A   10.0.5.1
